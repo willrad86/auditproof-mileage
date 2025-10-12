@@ -1,10 +1,20 @@
-import { supabase } from '../utils/supabaseClient';
 import { Trip, Coordinates } from '../types';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import * as Network from 'expo-network';
 import { calculateDistance, calculateTotalDistance } from '../utils/haversine';
 import { generateTripHash } from '../utils/cryptoUtils';
+import { geocodeWithFallback } from './geoService';
+import {
+  getAllTripsLocal,
+  getTripByIdLocal,
+  getActiveTripLocal,
+  createTripLocal,
+  updateTripLocal,
+  addPointToTripLocal,
+  deleteTripLocal,
+  getTripsByMonthYearLocal,
+} from './localTripDb';
+import { getDatabase } from './localDbService';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 const TRIP_UPDATE_INTERVAL = 10000;
@@ -30,48 +40,15 @@ export async function requestLocationPermissions(): Promise<boolean> {
 }
 
 export async function getAllTrips(vehicleId?: string): Promise<Trip[]> {
-  try {
-    const networkState = await Network.getNetworkStateAsync();
-    if (!networkState.isConnected || !networkState.isInternetReachable) {
-      return [];
-    }
-
-    let query = supabase.from('trips').select('*').order('start_time', { ascending: false });
-
-    if (vehicleId) {
-      query = query.eq('vehicle_id', vehicleId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    return data || [];
-  } catch (error) {
-    console.log('Offline: returning empty trips array');
-    return [];
-  }
+  return getAllTripsLocal(vehicleId);
 }
 
 export async function getTripById(id: string): Promise<Trip | null> {
-  const { data, error } = await supabase
-    .from('trips')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data;
+  return getTripByIdLocal(id);
 }
 
 export async function getActiveTrip(): Promise<Trip | null> {
-  const { data, error } = await supabase
-    .from('trips')
-    .select('*')
-    .eq('status', 'active')
-    .maybeSingle();
-
-  if (error) throw error;
-  return data;
+  return getActiveTripLocal();
 }
 
 export async function startTrip(
@@ -94,35 +71,19 @@ export async function startTrip(
     timestamp: Date.now(),
   };
 
-  const { data, error } = await supabase
-    .from('trips')
-    .insert({
-      vehicle_id: vehicleId,
-      start_time: new Date().toISOString(),
-      start_coords: startCoords,
-      points: [startCoords],
-      purpose,
-      notes,
-      status: 'active',
-      distance_miles: 0,
-      distance_km: 0,
-      classification: 'business',
-      auto_detected: false,
-    })
-    .select()
-    .single();
+  const startAddress = await geocodeWithFallback(startCoords);
 
-  if (error) throw error;
+  const trip = await createTripLocal(vehicleId, startCoords, startAddress, purpose, notes, false);
 
   activeTrip = {
-    id: data.id,
+    id: trip.id,
     points: [startCoords],
     lastUpdate: Date.now(),
   };
 
   await startBackgroundLocationTracking();
 
-  return data;
+  return trip;
 }
 
 export async function stopTrip(tripId: string): Promise<Trip> {
@@ -146,6 +107,8 @@ export async function stopTrip(tripId: string): Promise<Trip> {
   const distanceMiles = calculateTotalDistance(allPoints, 'miles');
   const distanceKm = calculateTotalDistance(allPoints, 'km');
 
+  const endAddress = await geocodeWithFallback(endCoords);
+
   const hash = await generateTripHash({
     start_time: trip.start_time,
     end_time: new Date().toISOString(),
@@ -157,27 +120,20 @@ export async function stopTrip(tripId: string): Promise<Trip> {
     notes: trip.notes,
   });
 
-  const { data, error } = await supabase
-    .from('trips')
-    .update({
-      end_time: new Date().toISOString(),
-      end_coords: endCoords,
-      points: allPoints,
-      distance_miles: distanceMiles,
-      distance_km: distanceKm,
-      hash,
-      status: 'completed',
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', tripId)
-    .select()
-    .single();
-
-  if (error) throw error;
+  const updatedTrip = await updateTripLocal(tripId, {
+    end_time: new Date().toISOString(),
+    end_coords: endCoords,
+    points: allPoints,
+    distance_miles: distanceMiles,
+    distance_km: distanceKm,
+    end_address: endAddress,
+    hash,
+    status: 'completed',
+  });
 
   activeTrip = null;
 
-  return data;
+  return updatedTrip;
 }
 
 export async function addPointToTrip(tripId: string, coords: Coordinates): Promise<void> {
@@ -189,15 +145,11 @@ export async function addPointToTrip(tripId: string, coords: Coordinates): Promi
   const distanceMiles = calculateTotalDistance(updatedPoints, 'miles');
   const distanceKm = calculateTotalDistance(updatedPoints, 'km');
 
-  await supabase
-    .from('trips')
-    .update({
-      points: updatedPoints,
-      distance_miles: distanceMiles,
-      distance_km: distanceKm,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', tripId);
+  await updateTripLocal(tripId, {
+    points: updatedPoints,
+    distance_miles: distanceMiles,
+    distance_km: distanceKm,
+  });
 }
 
 export async function updateTripDetails(
@@ -211,18 +163,7 @@ export async function updateTripDetails(
     classification?: 'unclassified' | 'business' | 'personal' | 'commute' | 'other';
   }
 ): Promise<Trip> {
-  const { data, error } = await supabase
-    .from('trips')
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', tripId)
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data;
+  return updateTripLocal(tripId, updates);
 }
 
 export async function updateTripClassification(
@@ -233,31 +174,14 @@ export async function updateTripClassification(
 }
 
 export async function deleteTrip(tripId: string): Promise<void> {
-  const { error } = await supabase.from('trips').delete().eq('id', tripId);
-
-  if (error) throw error;
+  await deleteTripLocal(tripId);
 }
 
 export async function getTripsByMonthYear(
   vehicleId: string,
   monthYear: string
 ): Promise<Trip[]> {
-  const startDate = `${monthYear}-01T00:00:00Z`;
-  const endDate = new Date(monthYear + '-01');
-  endDate.setMonth(endDate.getMonth() + 1);
-  const endDateString = endDate.toISOString();
-
-  const { data, error } = await supabase
-    .from('trips')
-    .select('*')
-    .eq('vehicle_id', vehicleId)
-    .gte('start_time', startDate)
-    .lt('start_time', endDateString)
-    .eq('status', 'completed')
-    .order('start_time', { ascending: false });
-
-  if (error) throw error;
-  return data || [];
+  return getTripsByMonthYearLocal(vehicleId, monthYear);
 }
 
 async function startBackgroundLocationTracking() {
@@ -309,12 +233,12 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
 export async function calculateReimbursement(
   distanceMiles: number
 ): Promise<number> {
-  const { data } = await supabase
-    .from('settings')
-    .select('value')
-    .eq('key', 'irs_rate_per_mile')
-    .maybeSingle();
+  const db = getDatabase();
+  const row = await db.getFirstAsync(
+    'SELECT value FROM settings WHERE key = ?',
+    ['irs_rate_per_mile']
+  );
 
-  const rate = data?.value ? parseFloat(data.value) : 0.67;
+  const rate = row ? parseFloat((row as any).value) : 0.67;
   return distanceMiles * rate;
 }

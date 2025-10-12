@@ -9,13 +9,19 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { DollarSign, Save, Info } from 'lucide-react-native';
-import { supabase } from '../../src/utils/supabaseClient';
+import { DollarSign, Save, Info, RefreshCw, Cloud } from 'lucide-react-native';
+import { getDatabase } from '../../src/services/localDbService';
+import { resolvePendingAddresses, getPendingAddressCount } from '../../src/services/addressResolutionService';
+import { syncAllToCloud, getUnsyncedCount } from '../../src/services/cloudSyncService';
 
 export default function SettingsScreen() {
   const [irsRate, setIrsRate] = useState('0.67');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [pendingAddresses, setPendingAddresses] = useState(0);
+  const [unsyncedCount, setUnsyncedCount] = useState({ trips: 0, vehicles: 0 });
 
   useEffect(() => {
     let mounted = true;
@@ -23,6 +29,7 @@ export default function SettingsScreen() {
     async function init() {
       if (mounted) {
         await loadSettings();
+        await loadCounts();
       }
     }
 
@@ -33,19 +40,29 @@ export default function SettingsScreen() {
     };
   }, []);
 
+  async function loadCounts() {
+    try {
+      const count = await getPendingAddressCount();
+      setPendingAddresses(count);
+
+      const unsynced = await getUnsyncedCount();
+      setUnsyncedCount(unsynced);
+    } catch (error) {
+      console.error('Failed to load counts:', error);
+    }
+  }
+
   async function loadSettings() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('settings')
-        .select('value')
-        .eq('key', 'irs_rate_per_mile')
-        .maybeSingle();
+      const db = getDatabase();
+      const row = await db.getFirstAsync(
+        'SELECT value FROM settings WHERE key = ?',
+        ['irs_rate_per_mile']
+      );
 
-      if (error) throw error;
-
-      if (data) {
-        setIrsRate(data.value);
+      if (row) {
+        setIrsRate((row as any).value);
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to load settings');
@@ -64,19 +81,64 @@ export default function SettingsScreen() {
 
     try {
       setSaving(true);
+      const db = getDatabase();
 
-      const { error } = await supabase
-        .from('settings')
-        .update({ value: rate.toString() })
-        .eq('key', 'irs_rate_per_mile');
-
-      if (error) throw error;
+      await db.runAsync(
+        'UPDATE settings SET value = ?, updated_at = ? WHERE key = ?',
+        [rate.toString(), new Date().toISOString(), 'irs_rate_per_mile']
+      );
 
       Alert.alert('Success', 'Settings saved successfully');
     } catch (error) {
       Alert.alert('Error', 'Failed to save settings');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleResolveAddresses() {
+    try {
+      setResolving(true);
+
+      const result = await resolvePendingAddresses();
+
+      if (result.total === 0) {
+        Alert.alert('No Addresses to Resolve', 'All trips have valid addresses.');
+      } else {
+        Alert.alert(
+          'Address Resolution Complete',
+          `Resolved: ${result.resolved}\nFailed: ${result.failed}\nTotal: ${result.total}`
+        );
+      }
+
+      await loadCounts();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to resolve addresses');
+    } finally {
+      setResolving(false);
+    }
+  }
+
+  async function handleSyncToCloud() {
+    try {
+      setSyncing(true);
+
+      const result = await syncAllToCloud();
+
+      if (!result.success) {
+        Alert.alert('Sync Failed', result.error || 'Unable to sync to cloud. Please check your internet connection.');
+        return;
+      }
+
+      const message = `Trips: ${result.trips.synced} synced, ${result.trips.failed} failed\nVehicles: ${result.vehicles.synced} synced, ${result.vehicles.failed} failed`;
+
+      Alert.alert('Sync Complete', message);
+
+      await loadCounts();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to sync to cloud');
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -137,6 +199,50 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Offline Features</Text>
+
+        <View style={styles.card}>
+          <View style={styles.actionItem}>
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>Resolve Addresses</Text>
+              <Text style={styles.actionDescription}>
+                Retry geocoding for {pendingAddresses} trip{pendingAddresses !== 1 ? 's' : ''} with offline coordinates
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.actionButton, resolving && styles.actionButtonDisabled]}
+              onPress={handleResolveAddresses}
+              disabled={resolving || pendingAddresses === 0}>
+              {resolving ? (
+                <ActivityIndicator size="small" color="#14b8a6" />
+              ) : (
+                <RefreshCw size={20} color={pendingAddresses > 0 ? '#14b8a6' : '#94a3b8'} />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.actionItem}>
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>Sync to Cloud</Text>
+              <Text style={styles.actionDescription}>
+                Upload {unsyncedCount.trips} trip{unsyncedCount.trips !== 1 ? 's' : ''} to Supabase (optional backup)
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.actionButton, syncing && styles.actionButtonDisabled]}
+              onPress={handleSyncToCloud}
+              disabled={syncing || unsyncedCount.trips === 0}>
+              {syncing ? (
+                <ActivityIndicator size="small" color="#3b82f6" />
+              ) : (
+                <Cloud size={20} color={unsyncedCount.trips > 0 ? '#3b82f6' : '#94a3b8'} />
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.section}>
         <Text style={styles.sectionTitle}>About</Text>
 
         <View style={styles.card}>
@@ -146,8 +252,13 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.aboutRow}>
-            <Text style={styles.aboutLabel}>Database</Text>
-            <Text style={styles.aboutValue}>Supabase</Text>
+            <Text style={styles.aboutLabel}>Local Database</Text>
+            <Text style={styles.aboutValue}>SQLite</Text>
+          </View>
+
+          <View style={styles.aboutRow}>
+            <Text style={styles.aboutLabel}>Cloud Backup</Text>
+            <Text style={styles.aboutValue}>Supabase (Optional)</Text>
           </View>
 
           <View style={styles.aboutRow}>
@@ -379,5 +490,39 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#94a3b8',
     textAlign: 'center',
+  },
+  actionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  actionInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  actionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginBottom: 4,
+  },
+  actionDescription: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 18,
+  },
+  actionButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
   },
 });

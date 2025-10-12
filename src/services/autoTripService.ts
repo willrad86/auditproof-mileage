@@ -1,12 +1,17 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { supabase } from '../utils/supabaseClient';
 import { Coordinates } from '../types';
 import { calculateDistance } from '../utils/haversine';
 import { generateTripHash } from '../utils/cryptoUtils';
-import { getAllVehicles } from './vehicleService';
+import { getAllVehiclesLocal } from './localVehicleDb';
 import { geocodeWithFallback } from './geoService';
 import { generateStaticMapImage } from './mapService';
+import {
+  getTripByIdLocal,
+  createTripLocal,
+  updateTripLocal,
+  addPointToTripLocal,
+} from './localTripDb';
 
 const AUTO_TRIP_TRACKING_TASK = 'AUTO_TRIP_TRACKING_TASK';
 
@@ -56,7 +61,7 @@ export async function startAutoTripDetection(): Promise<boolean> {
       return false;
     }
 
-    const vehicles = await getAllVehicles();
+    const vehicles = await getAllVehiclesLocal();
     if (vehicles.length === 0) {
       console.log('No vehicles configured for auto-detection');
       return false;
@@ -106,73 +111,44 @@ export async function isAutoDetectionRunning(): Promise<boolean> {
   return await TaskManager.isTaskRegisteredAsync(AUTO_TRIP_TRACKING_TASK);
 }
 
-async function createTrip(startCoords: Coordinates, vehicleId: string): Promise<string> {
-  const { data, error } = await supabase
-    .from('trips')
-    .insert({
-      vehicle_id: vehicleId,
-      start_time: new Date().toISOString(),
-      start_coords: startCoords,
-      points: [startCoords],
-      purpose: '',
-      notes: '',
-      status: 'active',
-      distance_miles: 0,
-      distance_km: 0,
-      classification: 'unclassified',
-      auto_detected: true,
-    })
-    .select()
-    .single();
+async function createAutoTrip(startCoords: Coordinates, vehicleId: string): Promise<string> {
+  const startAddress = await geocodeWithFallback(startCoords);
 
-  if (error) throw error;
-  return data.id;
+  const trip = await createTripLocal(vehicleId, startCoords, startAddress, '', '', true);
+  return trip.id;
 }
 
-async function addPointToTrip(tripId: string, coords: Coordinates): Promise<void> {
-  const { data: trip, error: fetchError } = await supabase
-    .from('trips')
-    .select('points, distance_miles, distance_km')
-    .eq('id', tripId)
-    .maybeSingle();
+async function addPointToAutoTrip(tripId: string, coords: Coordinates): Promise<void> {
+  await addPointToTripLocal(tripId, coords);
 
-  if (fetchError || !trip) return;
+  const trip = await getTripByIdLocal(tripId);
+  if (!trip) return;
 
-  const updatedPoints = [...trip.points, coords];
+  const updatedPoints = trip.points;
 
   let distanceMiles = trip.distance_miles;
   let distanceKm = trip.distance_km;
 
-  if (trip.points.length > 0) {
-    const lastPoint = trip.points[trip.points.length - 1];
+  if (updatedPoints.length > 1) {
+    const lastPoint = updatedPoints[updatedPoints.length - 2];
     const segmentMiles = calculateDistance(lastPoint, coords, 'miles');
     const segmentKm = calculateDistance(lastPoint, coords, 'km');
     distanceMiles += segmentMiles;
     distanceKm += segmentKm;
-  }
 
-  await supabase
-    .from('trips')
-    .update({
-      points: updatedPoints,
+    await updateTripLocal(tripId, {
       distance_miles: distanceMiles,
       distance_km: distanceKm,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', tripId);
+    });
+  }
 }
 
 async function finalizeTrip(): Promise<void> {
   if (!tripState.tripId) return;
 
   try {
-    const { data: trip, error } = await supabase
-      .from('trips')
-      .select('*')
-      .eq('id', tripState.tripId)
-      .maybeSingle();
-
-    if (error || !trip) return;
+    const trip = await getTripByIdLocal(tripState.tripId);
+    if (!trip) return;
 
     const endCoords = tripState.points[tripState.points.length - 1];
 
@@ -190,18 +166,14 @@ async function finalizeTrip(): Promise<void> {
     const startAddress = await geocodeWithFallback(trip.start_coords);
     const endAddress = await geocodeWithFallback(endCoords);
 
-    await supabase
-      .from('trips')
-      .update({
-        end_time: new Date().toISOString(),
-        end_coords: endCoords,
-        hash,
-        status: 'completed',
-        start_address: startAddress,
-        end_address: endAddress,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', tripState.tripId);
+    await updateTripLocal(tripState.tripId, {
+      end_time: new Date().toISOString(),
+      end_coords: endCoords,
+      hash,
+      status: 'completed',
+      start_address: startAddress,
+      end_address: endAddress,
+    });
 
     if (trip.vehicle_id) {
       const mapData = await generateStaticMapImage(
@@ -213,10 +185,9 @@ async function finalizeTrip(): Promise<void> {
       );
 
       if (mapData) {
-        await supabase
-          .from('trips')
-          .update({ map_image_uri: mapData.uri })
-          .eq('id', tripState.tripId);
+        await updateTripLocal(tripState.tripId, {
+          map_image_uri: mapData.uri,
+        });
       }
     }
   } catch (error) {
@@ -261,7 +232,7 @@ TaskManager.defineTask(AUTO_TRIP_TRACKING_TASK, async ({ data, error }: any) => 
       now - tripState.speedAboveStartTime >= START_DURATION_SECONDS * 1000
     ) {
       try {
-        tripState.tripId = await createTrip(coords, tripState.vehicleId);
+        tripState.tripId = await createAutoTrip(coords, tripState.vehicleId);
         tripState.points = [coords];
         tripState.lastSpeedBelowTime = null;
       } catch (error) {
@@ -289,7 +260,7 @@ TaskManager.defineTask(AUTO_TRIP_TRACKING_TASK, async ({ data, error }: any) => 
 
   if (tripState.tripId) {
     tripState.points.push(coords);
-    await addPointToTrip(tripState.tripId, coords);
+    await addPointToAutoTrip(tripState.tripId, coords);
   }
 });
 

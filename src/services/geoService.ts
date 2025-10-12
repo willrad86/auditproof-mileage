@@ -88,7 +88,7 @@ export async function forwardGeocode(address: string): Promise<Coordinates | nul
 }
 
 export function getOfflineFallbackAddress(coords: Coordinates): string {
-  return `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
+  return `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)} (offline)`;
 }
 
 export async function geocodeWithFallback(
@@ -102,7 +102,7 @@ export async function lookupAddress(lat: number, lon: number): Promise<string> {
   try {
     const online = await checkNetworkStatus();
     if (!online) {
-      return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+      return `${lat.toFixed(5)}, ${lon.toFixed(5)} (offline)`;
     }
 
     const response = await axios.get(
@@ -125,8 +125,8 @@ export async function lookupAddress(lat: number, lon: number): Promise<string> {
       return response.data.display_name;
     }
 
-    return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    return `${lat.toFixed(5)}, ${lon.toFixed(5)} (offline)`;
   } catch (error) {
-    return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    return `${lat.toFixed(5)}, ${lon.toFixed(5)} (offline)`;
   }
 }

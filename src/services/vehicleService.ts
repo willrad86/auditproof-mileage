@@ -1,9 +1,14 @@
-import { supabase } from '../utils/supabaseClient';
 import { Vehicle } from '../types';
 import * as FileSystem from 'expo-file-system';
 import { Paths } from 'expo-file-system';
-import * as Network from 'expo-network';
 import { hashFile } from '../utils/cryptoUtils';
+import {
+  getAllVehiclesLocal,
+  getVehicleByIdLocal,
+  createVehicleLocal,
+  updateVehicleLocal,
+  deleteVehicleLocal,
+} from './localVehicleDb';
 
 const PHOTOS_DIR = `${Paths.document.uri}photos/`;
 
@@ -15,34 +20,11 @@ async function ensurePhotosDirectory() {
 }
 
 export async function getAllVehicles(): Promise<Vehicle[]> {
-  try {
-    const networkState = await Network.getNetworkStateAsync();
-    if (!networkState.isConnected || !networkState.isInternetReachable) {
-      return [];
-    }
-
-    const { data, error } = await supabase
-      .from('vehicles')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  } catch (error) {
-    console.log('Offline: returning empty vehicles array');
-    return [];
-  }
+  return getAllVehiclesLocal();
 }
 
 export async function getVehicleById(id: string): Promise<Vehicle | null> {
-  const { data, error } = await supabase
-    .from('vehicles')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data;
+  return getVehicleByIdLocal(id);
 }
 
 export async function createVehicle(vehicle: {
@@ -53,42 +35,22 @@ export async function createVehicle(vehicle: {
 }): Promise<Vehicle> {
   const monthYear = new Date().toISOString().slice(0, 7);
 
-  const { data, error } = await supabase
-    .from('vehicles')
-    .insert({
-      ...vehicle,
-      month_year: monthYear,
-      verified: false,
-    })
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data;
+  return createVehicleLocal({
+    ...vehicle,
+    month_year: monthYear,
+    verified: false,
+  });
 }
 
 export async function updateVehicle(
   id: string,
   updates: Partial<Vehicle>
 ): Promise<Vehicle> {
-  const { data, error } = await supabase
-    .from('vehicles')
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id)
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data;
+  return updateVehicleLocal(id, updates);
 }
 
 export async function deleteVehicle(id: string): Promise<void> {
-  const { error } = await supabase.from('vehicles').delete().eq('id', id);
-
-  if (error) throw error;
+  await deleteVehicleLocal(id);
 }
 
 export async function saveOdometerPhoto(
@@ -115,9 +77,8 @@ export async function saveOdometerPhoto(
 
   const monthYear = new Date().toISOString().slice(0, 7);
 
-  const updateData: any = {
+  const updateData: Partial<Vehicle> = {
     month_year: monthYear,
-    updated_at: new Date().toISOString(),
   };
 
   if (type === 'start') {
@@ -128,16 +89,7 @@ export async function saveOdometerPhoto(
     updateData.photo_odometer_end_hash = hash;
   }
 
-  try {
-    const networkState = await Network.getNetworkStateAsync();
-    if (networkState.isConnected && networkState.isInternetReachable) {
-      await supabase.from('vehicles').update(updateData).eq('id', vehicleId);
-    } else {
-      console.log('Offline: Photo saved locally, will sync when online');
-    }
-  } catch (error) {
-    console.log('Could not sync to database, photo saved locally:', error);
-  }
+  await updateVehicleLocal(vehicleId, updateData);
 
   return { uri: destinationUri, hash };
 }

@@ -12,7 +12,7 @@ import {
   Switch,
   Image,
 } from 'react-native';
-import { Play, Square, MapPin, AlertTriangle, Zap, CheckCircle, Settings } from 'lucide-react-native';
+import { Play, Square, MapPin, AlertTriangle, Zap, CheckCircle, Settings, WifiOff, Cloud } from 'lucide-react-native';
 import * as Location from 'expo-location';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback } from 'react';
@@ -357,6 +357,16 @@ export default function TripsScreen() {
               {item.auto_detected && (
                 <View style={styles.autoDetectedBadge}>
                   <Zap size={12} color="#f59e0b" fill="#f59e0b" />
+                </View>
+              )}
+              {item.needs_lookup && (
+                <View style={styles.needsLookupBadge}>
+                  <WifiOff size={12} color="#ef4444" />
+                </View>
+              )}
+              {!item.synced_to_cloud && !isActive && (
+                <View style={styles.unsyncedBadge}>
+                  <Cloud size={12} color="#3b82f6" />
                 </View>
               )}
             </View>
@@ -1033,6 +1043,16 @@ const styles = StyleSheet.create({
     padding: 4,
     borderRadius: 12,
     backgroundColor: '#fef3c7',
+  },
+  needsLookupBadge: {
+    padding: 4,
+    borderRadius: 12,
+    backgroundColor: '#fee2e2',
+  },
+  unsyncedBadge: {
+    padding: 4,
+    borderRadius: 12,
+    backgroundColor: '#dbeafe',
   },
   tripDate: {
     fontSize: 13,

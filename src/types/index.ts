@@ -39,6 +39,8 @@ export interface Trip {
   status: 'active' | 'completed' | 'exported';
   classification: 'unclassified' | 'business' | 'personal' | 'commute' | 'other';
   auto_detected: boolean;
+  needs_lookup: boolean;
+  synced_to_cloud: boolean;
   created_at: string;
   updated_at: string;
 }
