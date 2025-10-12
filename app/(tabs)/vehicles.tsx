@@ -11,7 +11,6 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Camera, Plus, X, Check } from 'lucide-react-native';
 import {
   getAllVehicles,
@@ -20,15 +19,13 @@ import {
   verifyVehicleForMonth,
 } from '../../src/services/vehicleService';
 import { Vehicle } from '../../src/types';
+import { photoService } from '../../src/services/photoService';
 
 export default function VehiclesScreen() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showCameraModal, setShowCameraModal] = useState(false);
-  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
-  const [photoType, setPhotoType] = useState<'start' | 'end'>('start');
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [capturingPhoto, setCapturingPhoto] = useState(false);
 
   const [newVehicle, setNewVehicle] = useState({
     make: '',
@@ -87,27 +84,32 @@ export default function VehiclesScreen() {
   }
 
   async function handleTakePhoto(vehicle: Vehicle, type: 'start' | 'end') {
-    setSelectedVehicle(vehicle);
-    setPhotoType(type);
-    setShowCameraModal(true);
-  }
-
-  async function capturePhoto(camera: any) {
     try {
-      if (!selectedVehicle) return;
+      setCapturingPhoto(true);
 
-      const photo = await camera.takePictureAsync({
-        quality: 0.8,
-      });
+      const result = await photoService.captureOdometerPhoto();
 
-      await saveOdometerPhoto(selectedVehicle.id, photo.uri, photoType);
+      if (!result.success) {
+        if (result.error !== 'Photo capture cancelled') {
+          Alert.alert('Error', result.error || 'Failed to capture photo');
+        }
+        return;
+      }
 
-      setShowCameraModal(false);
-      setSelectedVehicle(null);
-      loadVehicles();
-      Alert.alert('Success', 'Odometer photo saved');
+      if (!result.uri) {
+        Alert.alert('Error', 'No photo URI returned');
+        return;
+      }
+
+      await saveOdometerPhoto(vehicle.id, result.uri, type);
+      await loadVehicles();
+
+      Alert.alert('Success', 'Odometer photo saved successfully');
     } catch (error) {
-      Alert.alert('Error', 'Failed to save photo');
+      console.error('Error in handleTakePhoto:', error);
+      Alert.alert('Error', 'Failed to save odometer photo');
+    } finally {
+      setCapturingPhoto(false);
     }
   }
 
@@ -170,16 +172,30 @@ export default function VehiclesScreen() {
           {needsStartPhoto ? (
             <TouchableOpacity
               style={[styles.photoButton, styles.primaryButton]}
-              onPress={() => handleTakePhoto(item, 'start')}>
-              <Camera size={20} color="#ffffff" />
-              <Text style={styles.photoButtonTextPrimary}>Take Start Photo</Text>
+              onPress={() => handleTakePhoto(item, 'start')}
+              disabled={capturingPhoto}>
+              {capturingPhoto ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <Camera size={20} color="#ffffff" />
+                  <Text style={styles.photoButtonTextPrimary}>Take Start Photo</Text>
+                </>
+              )}
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={styles.photoButton}
-              onPress={() => handleTakePhoto(item, 'end')}>
-              <Camera size={20} color="#14b8a6" />
-              <Text style={styles.photoButtonText}>Take End Photo</Text>
+              onPress={() => handleTakePhoto(item, 'end')}
+              disabled={capturingPhoto}>
+              {capturingPhoto ? (
+                <ActivityIndicator size="small" color="#14b8a6" />
+              ) : (
+                <>
+                  <Camera size={20} color="#14b8a6" />
+                  <Text style={styles.photoButtonText}>Take End Photo</Text>
+                </>
+              )}
             </TouchableOpacity>
           )}
         </View>
@@ -283,45 +299,6 @@ export default function VehiclesScreen() {
         </View>
       </Modal>
 
-      <Modal visible={showCameraModal} animationType="slide">
-        <View style={styles.cameraContainer}>
-          {cameraPermission?.granted ? (
-            <CameraView
-              style={styles.camera}
-              facing="back"
-              ref={(ref) => {
-                if (ref) {
-                  (window as any).cameraRef = ref;
-                }
-              }}>
-              <View style={styles.cameraControls}>
-                <TouchableOpacity
-                  style={styles.cameraButton}
-                  onPress={() => setShowCameraModal(false)}>
-                  <X size={32} color="#ffffff" />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.captureButton}
-                  onPress={() => capturePhoto((window as any).cameraRef)}>
-                  <View style={styles.captureButtonInner} />
-                </TouchableOpacity>
-
-                <View style={styles.cameraButton} />
-              </View>
-            </CameraView>
-          ) : (
-            <View style={styles.permissionContainer}>
-              <Text style={styles.permissionText}>Camera permission required</Text>
-              <TouchableOpacity
-                style={styles.permissionButton}
-                onPress={requestCameraPermission}>
-                <Text style={styles.permissionButtonText}>Grant Permission</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -503,66 +480,5 @@ const styles = StyleSheet.create({
   addButtonText: {
     color: '#ffffff',
     fontWeight: '600',
-  },
-  cameraContainer: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  camera: {
-    flex: 1,
-  },
-  cameraControls: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 32,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  cameraButton: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  captureButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  captureButtonInner: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#14b8a6',
-  },
-  permissionContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  permissionText: {
-    fontSize: 18,
-    color: '#ffffff',
-    marginBottom: 24,
-    textAlign: 'center',
-  },
-  permissionButton: {
-    backgroundColor: '#14b8a6',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  permissionButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 16,
   },
 });

@@ -1,4 +1,4 @@
-package com.anonymous.boltexponativewind
+package com.willrad86.boltexponativewind
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

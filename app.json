@@ -9,7 +9,31 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Auditproof Mileage Logger uses your camera to capture odometer photos.",
+        "NSPhotoLibraryAddUsageDescription": "Auditproof Mileage Logger saves odometer photos to your device for verification.",
+        "NSPhotoLibraryUsageDescription": "Auditproof Mileage Logger needs access to your photo library to save odometer photos."
+      }
+    },
+    "android": {
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO"
+      ],
+      "package": "com.willrad86.boltexponativewind"
     },
     "web": {
       "bundler": "metro",
@@ -32,22 +56,31 @@
         {
           "cameraPermission": "Allow Auditproof Mileage to capture odometer photos for trip verification."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Auditproof Mileage to save odometer photos to your device.",
+          "cameraPermission": "Allow Auditproof Mileage to capture odometer photos for trip verification."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Auditproof Mileage to save odometer photos to your device.",
+          "savePhotosPermission": "Allow Auditproof Mileage to save odometer photos to your device.",
+          "isAccessMediaLocationEnabled": true
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
     },
-    "android": {
-      "permissions": [
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_BACKGROUND_LOCATION",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_LOCATION",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
-      ],
-      "package": "com.anonymous.boltexponativewind"
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "67fd8dbb-d80c-4877-b34d-ef955fbd9049"
+      }
     }
   }
 }
