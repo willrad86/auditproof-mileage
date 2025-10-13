@@ -37,7 +37,7 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="myapp"/>
-        <data android:scheme="exp+bolt-expo-nativewind"/>
+        <data android:scheme="exp+auditproof-mileage"/>
       </intent-filter>
     </activity>
   </application>

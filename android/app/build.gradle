@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.willrad86.boltexponativewind'
+    namespace 'com.willrad86.auditproofmileage'
     defaultConfig {
-        applicationId 'com.willrad86.boltexponativewind'
+        applicationId 'com.willrad86.auditproofmileage'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

@@ -1,145 +1,195 @@
-import { Vehicle } from '../types';
-import * as FileSystem from 'expo-file-system';
-import { Paths } from 'expo-file-system';
-import { hashFile } from '../utils/cryptoUtils';
-import {
-  getAllVehiclesLocal,
-  getVehicleByIdLocal,
-  createVehicleLocal,
-  updateVehicleLocal,
-  deleteVehicleLocal,
-} from './localVehicleDb';
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImagePicker from "expo-image-picker";
+import * as SQLite from "expo-sqlite";
 
-const PHOTOS_DIR = `${Paths.document.uri}photos/`;
-
-async function ensurePhotosDirectory() {
-  const dirInfo = await FileSystem.getInfoAsync(PHOTOS_DIR);
-  if (!dirInfo.exists) {
-    await FileSystem.makeDirectoryAsync(PHOTOS_DIR, { intermediates: true });
-  }
-}
-
-export async function getAllVehicles(): Promise<Vehicle[]> {
-  return getAllVehiclesLocal();
-}
-
-export async function getVehicleById(id: string): Promise<Vehicle | null> {
-  return getVehicleByIdLocal(id);
-}
-
-export async function createVehicle(vehicle: {
+/* -------------------------------------------------------------------------- */
+/*                              TYPE DEFINITIONS                              */
+/* -------------------------------------------------------------------------- */
+type VehicleRow = {
+  id: number;
   make: string;
-  model: string;
-  year: number;
-  license_plate: string;
-}): Promise<Vehicle> {
-  const monthYear = new Date().toISOString().slice(0, 7);
+  model?: string | null;
+  year?: number | null;
+  license_plate?: string | null;
+  month_year?: string | null;
+  photo_odometer_start?: string | null;
+  photo_odometer_end?: string | null;
+  created_at?: string;
+};
 
-  return createVehicleLocal({
-    ...vehicle,
-    month_year: monthYear,
-    verified: false,
-  });
+/* -------------------------------------------------------------------------- */
+/*                           DATABASE INITIALIZATION                          */
+/* -------------------------------------------------------------------------- */
+const db = SQLite.openDatabaseSync("auditproof.db");
+
+function initTables() {
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS vehicles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      make TEXT NOT NULL,
+      model TEXT,
+      year INTEGER,
+      license_plate TEXT,
+      month_year TEXT,
+      photo_odometer_start TEXT,
+      photo_odometer_end TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS vehicle_photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vehicle_id INTEGER NOT NULL,
+      month TEXT NOT NULL,
+      photo_path TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 }
 
-export async function updateVehicle(
-  id: string,
-  updates: Partial<Vehicle>
-): Promise<Vehicle> {
-  return updateVehicleLocal(id, updates);
+initTables();
+
+/* -------------------------------------------------------------------------- */
+/*                                 VEHICLES                                   */
+/* -------------------------------------------------------------------------- */
+export async function getVehicles(): Promise<VehicleRow[]> {
+  try {
+    const rows = db.getAllSync<VehicleRow>(
+      "SELECT * FROM vehicles ORDER BY created_at DESC;"
+    );
+    return rows || [];
+  } catch (error) {
+    console.error("Error loading vehicles:", error);
+    return [];
+  }
 }
 
-export async function deleteVehicle(id: string): Promise<void> {
-  await deleteVehicleLocal(id);
+export async function addVehicle(make: string) {
+  try {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    db.runSync("INSERT INTO vehicles (make, month_year) VALUES (?, ?);", [
+      make,
+      currentMonth,
+    ]);
+    console.log("✅ Vehicle added:", make);
+  } catch (error) {
+    console.error("Error adding vehicle:", error);
+  }
 }
 
+/* -------------------------------------------------------------------------- */
+/*                              PHOTO UTILITIES                               */
+/* -------------------------------------------------------------------------- */
+async function ensurePhotosDirectory(): Promise<string> {
+  const dir = `${FileSystem.documentDirectory}vehicle_photos`;
+  const info = await FileSystem.getInfoAsync(dir);
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  }
+  return dir;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                           SAVE ODOMETER PHOTO                              */
+/* -------------------------------------------------------------------------- */
 export async function saveOdometerPhoto(
-  vehicleId: string,
-  photoUri: string,
-  type: 'start' | 'end'
-): Promise<{ uri: string; hash: string }> {
-  await ensurePhotosDirectory();
+  vehicleId: string | number,
+  uri: string
+): Promise<string> {
+  try {
+    const photosDir = await ensurePhotosDirectory();
+    const filename = `odometer_${vehicleId}_${Date.now()}.jpg`;
+    const dest = `${photosDir}/${filename}`;
+    await FileSystem.copyAsync({ from: uri, to: dest });
 
-  const timestamp = Date.now();
-  const fileName = `${vehicleId}_${type}_${timestamp}.jpg`;
-  const destinationUri = `${PHOTOS_DIR}${fileName}`;
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    db.runSync(
+      "INSERT INTO vehicle_photos (vehicle_id, month, photo_path) VALUES (?, ?, ?);",
+      [vehicleId, currentMonth, dest]
+    );
 
-  await FileSystem.copyAsync({
-    from: photoUri,
-    to: destinationUri,
-  });
+    const existing = db.getAllSync<{
+      photo_odometer_start?: string | null;
+      photo_odometer_end?: string | null;
+      month_year?: string | null;
+    }>(
+      "SELECT photo_odometer_start, photo_odometer_end, month_year FROM vehicles WHERE id = ?;",
+      [vehicleId]
+    )[0];
 
-  const base64 = await FileSystem.readAsStringAsync(destinationUri, {
-    encoding: 'base64' as any,
-  });
+    if (!existing) return dest;
 
-  const hash = await hashFile(base64);
+    if (!existing.photo_odometer_start || existing.month_year !== currentMonth) {
+      db.runSync(
+        "UPDATE vehicles SET photo_odometer_start = ?, month_year = ? WHERE id = ?;",
+        [dest, currentMonth, vehicleId]
+      );
+    } else {
+      db.runSync(
+        "UPDATE vehicles SET photo_odometer_end = ?, month_year = ? WHERE id = ?;",
+        [dest, currentMonth, vehicleId]
+      );
+    }
 
-  const monthYear = new Date().toISOString().slice(0, 7);
-
-  const updateData: Partial<Vehicle> = {
-    month_year: monthYear,
-  };
-
-  if (type === 'start') {
-    updateData.photo_odometer_start = destinationUri;
-    updateData.photo_odometer_start_hash = hash;
-  } else {
-    updateData.photo_odometer_end = destinationUri;
-    updateData.photo_odometer_end_hash = hash;
+    console.log("✅ Photo saved for vehicle:", vehicleId);
+    return dest;
+  } catch (error) {
+    console.error("Error saving odometer photo:", error);
+    throw error;
   }
-
-  await updateVehicleLocal(vehicleId, updateData);
-
-  return { uri: destinationUri, hash };
 }
 
-export async function verifyVehicleForMonth(vehicleId: string): Promise<boolean> {
-  const vehicle = await getVehicleById(vehicleId);
-  if (!vehicle) return false;
+/* -------------------------------------------------------------------------- */
+/*                           TAKE ODOMETER PHOTO                              */
+/* -------------------------------------------------------------------------- */
+export async function takeOdometerPhoto(
+  vehicleId: string | number
+): Promise<string | null> {
+  try {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      alert("Camera access is required to take photos.");
+      return null;
+    }
 
-  const currentMonthYear = new Date().toISOString().slice(0, 7);
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+    });
 
-  return (
-    vehicle.month_year === currentMonthYear &&
-    !!vehicle.photo_odometer_start &&
-    !!vehicle.photo_odometer_start_hash
-  );
+    if (result.canceled) return null;
+
+    const photoUri = result.assets[0].uri;
+    const savedUri = await saveOdometerPhoto(vehicleId, photoUri);
+    return savedUri ?? null;
+  } catch (error) {
+    console.error("Error taking odometer photo:", error);
+    return null;
+  }
 }
 
-export async function canStartTrip(vehicleId: string): Promise<{
-  canStart: boolean;
-  reason?: string;
-}> {
-  const vehicle = await getVehicleById(vehicleId);
-  if (!vehicle) {
-    return { canStart: false, reason: 'Vehicle not found' };
+/* -------------------------------------------------------------------------- */
+/*                          CLEAN OLD PHOTOS (OPTIONAL)                       */
+/* -------------------------------------------------------------------------- */
+export async function clearOldPhotos() {
+  try {
+    const dir = `${FileSystem.documentDirectory}vehicle_photos`;
+    const files = await FileSystem.readDirectoryAsync(dir);
+    const now = Date.now();
+
+    for (const file of files) {
+      const info = await FileSystem.getInfoAsync(`${dir}/${file}`);
+      if (info.exists && info.modificationTime) {
+        const age = now - info.modificationTime * 1000;
+        // delete files older than 1 year
+        if (age > 1000 * 60 * 60 * 24 * 365) {
+          await FileSystem.deleteAsync(`${dir}/${file}`);
+        }
+      }
+    }
+    console.log("🧹 Old photos cleaned up");
+  } catch (error) {
+    console.error("Error cleaning up photos:", error);
   }
-
-  const isVerified = await verifyVehicleForMonth(vehicleId);
-  if (!isVerified) {
-    return {
-      canStart: false,
-      reason: 'Start odometer photo required for current month',
-    };
-  }
-
-  return { canStart: true };
-}
-
-export async function getVehicleOdometerPhotos(vehicleId: string): Promise<{
-  start?: string;
-  end?: string;
-  startHash?: string;
-  endHash?: string;
-}> {
-  const vehicle = await getVehicleById(vehicleId);
-  if (!vehicle) return {};
-
-  return {
-    start: vehicle.photo_odometer_start,
-    end: vehicle.photo_odometer_end,
-    startHash: vehicle.photo_odometer_start_hash,
-    endHash: vehicle.photo_odometer_end_hash,
-  };
 }

@@ -1,4 +1,4 @@
-package com.willrad86.boltexponativewind
+package com.willrad86.auditproofmileage
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
