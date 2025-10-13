@@ -1,4 +1,4 @@
-import { supabase } from '../utils/supabaseClient';
+import { supabase, isSupabaseAvailable } from '../utils/supabaseClient';
 import * as Network from 'expo-network';
 import { getUnsyncedTripsLocal, updateTripLocal } from './localTripDb';
 import { getAllVehiclesLocal } from './localVehicleDb';
@@ -10,6 +10,15 @@ export async function syncTripsToCloud(): Promise<{
   error?: string;
 }> {
   try {
+    if (!isSupabaseAvailable()) {
+      return {
+        success: false,
+        synced: 0,
+        failed: 0,
+        error: 'Supabase not configured',
+      };
+    }
+
     const networkState = await Network.getNetworkStateAsync();
     if (!networkState.isConnected || !networkState.isInternetReachable) {
       return {
@@ -27,7 +36,7 @@ export async function syncTripsToCloud(): Promise<{
 
     for (const trip of unsyncedTrips) {
       try {
-        const { error } = await supabase.from('trips').upsert({
+        const { error } = await supabase!.from('trips').upsert({
           id: trip.id,
           vehicle_id: trip.vehicle_id,
           start_time: trip.start_time,
@@ -87,6 +96,15 @@ export async function syncVehiclesToCloud(): Promise<{
   error?: string;
 }> {
   try {
+    if (!isSupabaseAvailable()) {
+      return {
+        success: false,
+        synced: 0,
+        failed: 0,
+        error: 'Supabase not configured',
+      };
+    }
+
     const networkState = await Network.getNetworkStateAsync();
     if (!networkState.isConnected || !networkState.isInternetReachable) {
       return {
@@ -104,7 +122,7 @@ export async function syncVehiclesToCloud(): Promise<{
 
     for (const vehicle of vehicles) {
       try {
-        const { error } = await supabase.from('vehicles').upsert({
+        const { error } = await supabase!.from('vehicles').upsert({
           id: vehicle.id,
           make: vehicle.make,
           model: vehicle.model,
@@ -153,6 +171,15 @@ export async function syncAllToCloud(): Promise<{
   vehicles: { synced: number; failed: number };
   error?: string;
 }> {
+  if (!isSupabaseAvailable()) {
+    return {
+      success: false,
+      trips: { synced: 0, failed: 0 },
+      vehicles: { synced: 0, failed: 0 },
+      error: 'Supabase not configured',
+    };
+  }
+
   const networkState = await Network.getNetworkStateAsync();
   if (!networkState.isConnected || !networkState.isInternetReachable) {
     return {

@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system';
 import { Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { supabase } from '../utils/supabaseClient';
+import { supabase, isSupabaseAvailable } from '../utils/supabaseClient';
 import { Trip, Vehicle, ReportMetadata } from '../types';
 import {
   generateReportHash,
@@ -223,18 +223,24 @@ export async function exportMonthlyReport(
     }
   }
 
-  await supabase.from('reports').insert({
-    vehicle_id: vehicleId,
-    month_year: monthYear,
-    total_miles: trips.reduce((sum, t) => sum + t.distance_miles, 0),
-    total_km: trips.reduce((sum, t) => sum + t.distance_km, 0),
-    total_value: metadata.totalValue,
-    trip_count: trips.length,
-    report_hash: hash,
-    signature,
-    signed_at: new Date().toISOString(),
-    export_uri: reportDir,
-  });
+  if (isSupabaseAvailable()) {
+    try {
+      await supabase!.from('reports').insert({
+        vehicle_id: vehicleId,
+        month_year: monthYear,
+        total_miles: trips.reduce((sum, t) => sum + t.distance_miles, 0),
+        total_km: trips.reduce((sum, t) => sum + t.distance_km, 0),
+        total_value: metadata.totalValue,
+        trip_count: trips.length,
+        report_hash: hash,
+        signature,
+        signed_at: new Date().toISOString(),
+        export_uri: reportDir,
+      });
+    } catch (error) {
+      console.warn('Failed to save report to cloud, but local export succeeded:', error);
+    }
+  }
 
   return reportDir;
 }

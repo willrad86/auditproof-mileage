@@ -88,9 +88,16 @@ export async function generateStaticMapImage(
     const response = await axios.get(osmUrl, {
       responseType: 'arraybuffer',
       timeout: 10000,
+      headers: {
+        'User-Agent': 'AuditproofMileage/1.0',
+      },
     });
 
-    const base64Image = Buffer.from(response.data, 'binary').toString('base64');
+    const uint8Array = new Uint8Array(response.data);
+    const binaryString = Array.from(uint8Array)
+      .map(byte => String.fromCharCode(byte))
+      .join('');
+    const base64Image = btoa(binaryString);
 
     await FileSystem.writeAsStringAsync(filePath, base64Image, {
       encoding: 'base64' as any,

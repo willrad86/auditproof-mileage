@@ -2,7 +2,7 @@ import { Vehicle } from '../types';
 import { getDatabase, generateId, isAddressOffline } from './localDbService';
 
 export async function getAllVehiclesLocal(): Promise<Vehicle[]> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const rows = await db.getAllAsync('SELECT * FROM vehicles ORDER BY created_at DESC');
 
   return rows.map(row => ({
@@ -23,7 +23,7 @@ export async function getAllVehiclesLocal(): Promise<Vehicle[]> {
 }
 
 export async function getVehicleByIdLocal(id: string): Promise<Vehicle | null> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const row = await db.getFirstAsync('SELECT * FROM vehicles WHERE id = ?', [id]);
 
   if (!row) return null;
@@ -46,7 +46,7 @@ export async function getVehicleByIdLocal(id: string): Promise<Vehicle | null> {
 }
 
 export async function createVehicleLocal(vehicle: Omit<Vehicle, 'id' | 'created_at' | 'updated_at'>): Promise<Vehicle> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const id = generateId();
   const now = new Date().toISOString();
 
@@ -82,7 +82,7 @@ export async function createVehicleLocal(vehicle: Omit<Vehicle, 'id' | 'created_
 }
 
 export async function updateVehicleLocal(id: string, updates: Partial<Vehicle>): Promise<Vehicle> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const now = new Date().toISOString();
 
   const fields: string[] = [];
@@ -145,6 +145,6 @@ export async function updateVehicleLocal(id: string, updates: Partial<Vehicle>):
 }
 
 export async function deleteVehicleLocal(id: string): Promise<void> {
-  const db = getDatabase();
+  const db = await getDatabase();
   await db.runAsync('DELETE FROM vehicles WHERE id = ?', [id]);
 }

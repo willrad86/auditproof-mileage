@@ -1,6 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import * as SQLite from "expo-sqlite";
+import { Vehicle } from "../types";
 
 /* -------------------------------------------------------------------------- */
 /*                              TYPE DEFINITIONS                              */
@@ -14,7 +15,11 @@ type VehicleRow = {
   month_year?: string | null;
   photo_odometer_start?: string | null;
   photo_odometer_end?: string | null;
+  photo_odometer_start_hash?: string | null;
+  photo_odometer_end_hash?: string | null;
+  verified?: number;
   created_at?: string;
+  updated_at?: string;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -33,7 +38,11 @@ function initTables() {
       month_year TEXT,
       photo_odometer_start TEXT,
       photo_odometer_end TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      photo_odometer_start_hash TEXT,
+      photo_odometer_end_hash TEXT,
+      verified INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -53,29 +62,30 @@ initTables();
 /* -------------------------------------------------------------------------- */
 /*                                 VEHICLES                                   */
 /* -------------------------------------------------------------------------- */
-export async function getVehicles(): Promise<VehicleRow[]> {
-  try {
-    const rows = db.getAllSync<VehicleRow>(
-      "SELECT * FROM vehicles ORDER BY created_at DESC;"
-    );
-    return rows || [];
-  } catch (error) {
-    console.error("Error loading vehicles:", error);
-    return [];
-  }
+export async function getVehicles(): Promise<Vehicle[]> {
+  const { getAllVehiclesLocal } = await import('./localVehicleDb');
+  return await getAllVehiclesLocal();
 }
 
-export async function addVehicle(make: string) {
-  try {
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    db.runSync("INSERT INTO vehicles (make, month_year) VALUES (?, ?);", [
-      make,
-      currentMonth,
-    ]);
-    console.log("✅ Vehicle added:", make);
-  } catch (error) {
-    console.error("Error adding vehicle:", error);
-  }
+export async function addVehicle(
+  make: string,
+  model?: string,
+  year?: number,
+  license_plate?: string
+): Promise<Vehicle> {
+  const { createVehicleLocal } = await import('./localVehicleDb');
+  const { getCurrentMonthYear } = await import('./odometerPhotoService');
+
+  const vehicle = await createVehicleLocal({
+    make,
+    model: model || '',
+    year: year || new Date().getFullYear(),
+    license_plate: license_plate || '',
+    month_year: getCurrentMonthYear(),
+    verified: false,
+  });
+
+  return vehicle;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -170,6 +180,64 @@ export async function takeOdometerPhoto(
 }
 
 /* -------------------------------------------------------------------------- */
+/*                          GET VEHICLE BY ID                                 */
+/* -------------------------------------------------------------------------- */
+export async function getVehicleById(vehicleId: string | number): Promise<Vehicle | null> {
+  try {
+    const rows = db.getAllSync<VehicleRow>(
+      "SELECT * FROM vehicles WHERE id = ? LIMIT 1;",
+      [vehicleId]
+    );
+    if (rows.length === 0) return null;
+
+    const row = rows[0];
+    return {
+      id: String(row.id),
+      make: row.make,
+      model: row.model || '',
+      year: row.year || new Date().getFullYear(),
+      license_plate: row.license_plate || '',
+      month_year: row.month_year || '',
+      photo_odometer_start: row.photo_odometer_start || undefined,
+      photo_odometer_end: row.photo_odometer_end || undefined,
+      photo_odometer_start_hash: row.photo_odometer_start_hash || undefined,
+      photo_odometer_end_hash: row.photo_odometer_end_hash || undefined,
+      verified: Boolean(row.verified),
+      created_at: row.created_at || new Date().toISOString(),
+      updated_at: row.updated_at || new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error("Error getting vehicle by ID:", error);
+    return null;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                      GET VEHICLE ODOMETER PHOTOS                           */
+/* -------------------------------------------------------------------------- */
+export async function getVehicleOdometerPhotos(vehicleId: string | number): Promise<{
+  start?: string;
+  end?: string;
+  startHash?: string;
+  endHash?: string;
+}> {
+  try {
+    const vehicle = await getVehicleById(vehicleId);
+    if (!vehicle) return {};
+
+    return {
+      start: vehicle.photo_odometer_start,
+      end: vehicle.photo_odometer_end,
+      startHash: vehicle.photo_odometer_start_hash,
+      endHash: vehicle.photo_odometer_end_hash,
+    };
+  } catch (error) {
+    console.error("Error getting vehicle odometer photos:", error);
+    return {};
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /*                          CLEAN OLD PHOTOS (OPTIONAL)                       */
 /* -------------------------------------------------------------------------- */
 export async function clearOldPhotos() {
@@ -182,7 +250,6 @@ export async function clearOldPhotos() {
       const info = await FileSystem.getInfoAsync(`${dir}/${file}`);
       if (info.exists && info.modificationTime) {
         const age = now - info.modificationTime * 1000;
-        // delete files older than 1 year
         if (age > 1000 * 60 * 60 * 24 * 365) {
           await FileSystem.deleteAsync(`${dir}/${file}`);
         }

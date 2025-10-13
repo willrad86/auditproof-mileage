@@ -39,7 +39,7 @@ function rowToTrip(row: any): Trip {
 }
 
 export async function getAllTripsLocal(vehicleId?: string): Promise<Trip[]> {
-  const db = getDatabase();
+  const db = await getDatabase();
 
   let query = 'SELECT * FROM trips';
   const params: any[] = [];
@@ -56,7 +56,7 @@ export async function getAllTripsLocal(vehicleId?: string): Promise<Trip[]> {
 }
 
 export async function getTripByIdLocal(id: string): Promise<Trip | null> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const row = await db.getFirstAsync('SELECT * FROM trips WHERE id = ?', [id]);
 
   if (!row) return null;
@@ -64,7 +64,7 @@ export async function getTripByIdLocal(id: string): Promise<Trip | null> {
 }
 
 export async function getActiveTripLocal(): Promise<Trip | null> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const row = await db.getFirstAsync('SELECT * FROM trips WHERE status = ? LIMIT 1', ['active']);
 
   if (!row) return null;
@@ -79,7 +79,7 @@ export async function createTripLocal(
   notes: string = '',
   autoDetected: boolean = false
 ): Promise<Trip> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const id = generateId();
   const now = new Date().toISOString();
 
@@ -122,7 +122,7 @@ export async function createTripLocal(
 }
 
 export async function updateTripLocal(id: string, updates: Partial<Trip>): Promise<Trip> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const now = new Date().toISOString();
 
   const fields: string[] = [];
@@ -226,12 +226,12 @@ export async function addPointToTripLocal(tripId: string, coords: Coordinates): 
 }
 
 export async function deleteTripLocal(id: string): Promise<void> {
-  const db = getDatabase();
+  const db = await getDatabase();
   await db.runAsync('DELETE FROM trips WHERE id = ?', [id]);
 }
 
 export async function getTripsByMonthYearLocal(vehicleId: string, monthYear: string): Promise<Trip[]> {
-  const db = getDatabase();
+  const db = await getDatabase();
 
   const startDate = `${monthYear}-01T00:00:00`;
   const endDate = new Date(`${monthYear}-01`);
@@ -252,13 +252,13 @@ export async function getTripsByMonthYearLocal(vehicleId: string, monthYear: str
 }
 
 export async function getTripsNeedingLookupLocal(): Promise<Trip[]> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const rows = await db.getAllAsync('SELECT * FROM trips WHERE needs_lookup = 1 ORDER BY start_time DESC');
   return rows.map(rowToTrip);
 }
 
 export async function getUnsyncedTripsLocal(): Promise<Trip[]> {
-  const db = getDatabase();
+  const db = await getDatabase();
   const rows = await db.getAllAsync(
     'SELECT * FROM trips WHERE synced_to_cloud = 0 AND status = ? ORDER BY start_time DESC',
     ['completed']

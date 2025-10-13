@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { FileText, Download, CheckCircle, AlertCircle } from 'lucide-react-native';
 import { supabase } from '../../src/utils/supabaseClient';
-import { getAllVehicles } from '../../src/services/vehicleService';
+import { getVehicles } from '../../src/services/vehicleService';
 import { exportMonthlyReport, shareReport, verifyReport } from '../../src/services/exportService';
 import { Vehicle, Report } from '../../src/types';
 
@@ -45,7 +45,7 @@ export default function ReportsScreen() {
       setLoading(true);
       const [reportsData, vehiclesData] = await Promise.all([
         loadReports(),
-        getAllVehicles(),
+        getVehicles(),
       ]);
 
       setReports(reportsData);
@@ -61,13 +61,22 @@ export default function ReportsScreen() {
   }
 
   async function loadReports(): Promise<Report[]> {
-    const { data, error } = await supabase
-      .from('reports')
-      .select('*')
-      .order('signed_at', { ascending: false });
+    if (!supabase) {
+      return [];
+    }
 
-    if (error) throw error;
-    return data || [];
+    try {
+      const { data, error } = await supabase
+        .from('reports')
+        .select('*')
+        .order('signed_at', { ascending: false });
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.warn('Failed to load reports from cloud:', error);
+      return [];
+    }
   }
 
   async function handleExportReport() {

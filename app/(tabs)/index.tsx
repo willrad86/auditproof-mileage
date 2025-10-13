@@ -25,7 +25,7 @@ import {
   updateTripClassification,
   calculateReimbursement,
 } from '../../src/services/tripService';
-import { getAllVehicles, canStartTrip } from '../../src/services/vehicleService';
+import { getVehicles } from '../../src/services/vehicleService';
 import { geocodeWithFallback } from '../../src/services/geoService';
 import { generateStaticMapImage } from '../../src/services/mapService';
 import {
@@ -91,7 +91,7 @@ export default function TripsScreen() {
       setLoading(true);
       const [tripsData, vehiclesData, activeTripData] = await Promise.all([
         getAllTrips(),
-        getAllVehicles(),
+        getVehicles(),
         getActiveTrip(),
       ]);
 
@@ -218,12 +218,6 @@ export default function TripsScreen() {
     }
 
     try {
-      const canStart = await canStartTrip(selectedVehicleId);
-      if (!canStart.canStart) {
-        Alert.alert('Cannot Start Trip', canStart.reason || 'Unknown error');
-        return;
-      }
-
       const trip = await startTrip(selectedVehicleId, purpose, notes);
       setActiveTrip(trip);
       setShowStartModal(false);

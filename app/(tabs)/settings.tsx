@@ -55,7 +55,7 @@ export default function SettingsScreen() {
   async function loadSettings() {
     try {
       setLoading(true);
-      const db = getDatabase();
+      const db = await getDatabase();
       const row = await db.getFirstAsync(
         'SELECT value FROM settings WHERE key = ?',
         ['irs_rate_per_mile']
@@ -81,7 +81,7 @@ export default function SettingsScreen() {
 
     try {
       setSaving(true);
-      const db = getDatabase();
+      const db = await getDatabase();
 
       await db.runAsync(
         'UPDATE settings SET value = ?, updated_at = ? WHERE key = ?',

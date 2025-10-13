@@ -81,3 +81,21 @@ export interface ReportMetadata {
     end: string;
   };
 }
+
+export interface VehiclePhoto {
+  id: string;
+  vehicle_id: string;
+  month_year: string;
+  photo_type: 'start' | 'end';
+  photo_uri: string;
+  photo_hash?: string;
+  timestamp: string;
+  synced_to_cloud: boolean;
+  created_at: string;
+}
+
+export interface MonthlyPhotoRecord {
+  month_year: string;
+  start_photo?: VehiclePhoto;
+  end_photo?: VehiclePhoto;
+}
