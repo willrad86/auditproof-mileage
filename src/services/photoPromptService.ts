@@ -1,29 +1,126 @@
-import { getCurrentMonthYear, checkMissingPhotos } from './odometerPhotoService';
-import { getVehicles } from './simpleVehicleService';
+import * as SQLite from 'expo-sqlite';
+import * as Crypto from 'expo-crypto';
+import { initDatabase } from './simpleVehicleService';
+import { getMonthlyRecordsByVehicle, getCurrentMonthYear } from './odometerPhotoService';
 
-export interface PhotoPrompt {
-  vehicleId: string;
-  vehicleName: string;
-  promptType: 'start' | 'end';
-  monthYear: string;
+/**
+ * This service controls whether the app should prompt a user
+ * to take a starting odometer photo for a newly added vehicle.
+ *
+ * It ensures prompts are shown once per vehicle per month.
+ */
+
+/** Ensures the prompt tracking table exists. */
+export async function initPromptTable(): Promise<void> {
+  const db = await initDatabase();
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS photo_prompts (
+      id TEXT PRIMARY KEY,
+      vehicle_id TEXT NOT NULL,
+      month_year TEXT NOT NULL,
+      shown INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (vehicle_id) REFERENCES vehicles(id) ON DELETE CASCADE
+    );
+  `);
 }
 
-export async function checkForPhotoPrompts(): Promise<PhotoPrompt[]> {
-  return [];
-}
+/**
+ * Checks whether a new vehicle requires a start photo this month.
+ * Returns true if there is no start photo recorded yet for the current month.
+ */
+export async function checkNewVehicleNeedsStartPhoto(vehicle_id: string): Promise<boolean> {
+  try {
+    const db = await initDatabase();
+    await initPromptTable();
 
-export async function markPromptShown(vehicleId: string, promptType: 'start' | 'end'): Promise<void> {
-  // Simplified - no persistence
-}
+    const month = getCurrentMonthYear();
 
-export async function checkNewVehicleNeedsStartPhoto(vehicleId: string): Promise<boolean> {
-  const currentMonthYear = getCurrentMonthYear();
-  const now = new Date();
+    // First check if we’ve already recorded any photos for this month
+    const monthlyRecords = await getMonthlyRecordsByVehicle(vehicle_id);
+    const thisMonth = monthlyRecords.find(r => r.month_year === month);
 
-  if (now.getDate() === 1) {
+    // If already has a start photo → no need to prompt
+    if (thisMonth && thisMonth.start_photo) return false;
+
+    // If we already marked a prompt as shown this month → skip
+    const existing = db.getFirstSync(
+      'SELECT * FROM photo_prompts WHERE vehicle_id = ? AND month_year = ?',
+      [vehicle_id, month]
+    );
+    if (existing && existing.shown === 1) return false;
+
+    // Otherwise, create a new prompt record and signal the app to show the modal
+    const id = Crypto.randomUUID();
+    const now = new Date().toISOString();
+    db.runSync(
+      `INSERT OR REPLACE INTO photo_prompts (id, vehicle_id, month_year, shown, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, vehicle_id, month, 0, now]
+    );
+
+    console.log(`📸 Prompt created for vehicle ${vehicle_id} (${month})`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error checking start photo prompt:', error);
     return false;
   }
+}
 
-  const missing = await checkMissingPhotos(vehicleId, currentMonthYear);
-  return missing.needsStart;
+/**
+ * Marks that a photo prompt has been displayed and acknowledged
+ * so the user isn’t asked again for that vehicle this month.
+ */
+export async function markPromptShown(vehicle_id: string): Promise<void> {
+  try {
+    const db = await initDatabase();
+    await initPromptTable();
+    const month = getCurrentMonthYear();
+
+    const row = db.getFirstSync(
+      'SELECT * FROM photo_prompts WHERE vehicle_id = ? AND month_year = ?',
+      [vehicle_id, month]
+    );
+
+    if (row) {
+      db.runSync(
+        'UPDATE photo_prompts SET shown = 1 WHERE vehicle_id = ? AND month_year = ?',
+        [vehicle_id, month]
+      );
+    } else {
+      const id = Crypto.randomUUID();
+      const now = new Date().toISOString();
+      db.runSync(
+        'INSERT INTO photo_prompts (id, vehicle_id, month_year, shown, created_at) VALUES (?, ?, ?, ?, ?)',
+        [id, vehicle_id, month, 1, now]
+      );
+    }
+
+    console.log(`✅ Prompt marked as shown for ${vehicle_id} (${month})`);
+  } catch (error) {
+    console.error('❌ Error marking prompt as shown:', error);
+  }
+}
+
+/**
+ * Clears old prompt records (optional housekeeping).
+ * Call monthly or on DB cleanup.
+ */
+export async function clearOldPrompts(): Promise<void> {
+  try {
+    const db = await initDatabase();
+    await initPromptTable();
+
+    // Keep only the last 6 months of records
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 6);
+    const cutoffStr = `${cutoff.getFullYear()}-${(cutoff.getMonth() + 1)
+      .toString()
+      .padStart(2, '0')}`;
+
+    db.runSync('DELETE FROM photo_prompts WHERE month_year < ?', [cutoffStr]);
+    console.log('🧹 Cleared old photo prompt records');
+  } catch (error) {
+    console.error('❌ Error clearing old prompts:', error);
+  }
 }

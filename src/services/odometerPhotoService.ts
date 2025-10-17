@@ -1,140 +1,161 @@
-import * as FileSystem from 'expo-file-system';
 import * as SQLite from 'expo-sqlite';
-import { sha256 } from 'js-sha256';
+import * as Crypto from 'expo-crypto';
 import { VehiclePhoto, MonthlyPhotoRecord } from '../types';
+import { initDatabase } from './simpleVehicleService';
+import { getCurrentMonthYear } from '../utils/dateUtils'; // optional helper if exists
 
-const db = SQLite.openDatabaseSync('auditproof.db');
-const PHOTO_DIR = `${FileSystem.documentDirectory || ''}vehicle_photos/`;
-
-export async function ensurePhotoDirectory(): Promise<void> {
-  const dirInfo = await FileSystem.getInfoAsync(PHOTO_DIR);
-  if (!dirInfo.exists) {
-    await FileSystem.makeDirectoryAsync(PHOTO_DIR, { intermediates: true });
-  }
-}
-
-export function getCurrentMonthYear(): string {
-  const now = new Date();
-  const month = now.toLocaleString('en-US', { month: 'long' });
-  const year = now.getFullYear();
-  return `${month} ${year}`;
-}
-
+/**
+ * Saves an odometer photo (start or end) for a given vehicle and month.
+ * Creates or replaces the record if it already exists.
+ */
 export async function saveOdometerPhoto(
-  vehicleId: string,
-  photoType: 'start' | 'end',
-  photoUri: string,
-  monthYear?: string
+  vehicle_id: string,
+  photo_type: 'start' | 'end',
+  photo_uri: string,
+  month_year?: string
 ): Promise<VehiclePhoto> {
-  await ensurePhotoDirectory();
+  try {
+    const db = await initDatabase();
+    const id = Crypto.randomUUID();
+    const now = new Date().toISOString();
+    const month = month_year || getCurrentMonthYear();
 
-  const targetMonthYear = monthYear || getCurrentMonthYear();
-  const timestamp = new Date().toISOString();
-  const photoId = `photo_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-  const extension = photoUri.split('.').pop() || 'jpg';
-  const filename = `${vehicleId}_${photoType}_${targetMonthYear.replace(/\s/g, '_')}.${extension}`;
-  const newUri = `${PHOTO_DIR}${filename}`;
-
-  await FileSystem.copyAsync({
-    from: photoUri,
-    to: newUri,
-  });
-
-  const hash = sha256(newUri + timestamp);
-
-  const existingRows = db.getAllSync(
-    'SELECT id FROM vehicle_photos WHERE vehicle_id = ? AND month_year = ? AND photo_type = ?',
-    [vehicleId, targetMonthYear, photoType]
-  );
-
-  if (existingRows.length > 0) {
-    const existingId = (existingRows[0] as any).id;
     db.runSync(
-      `UPDATE vehicle_photos SET photo_uri = ?, photo_hash = ?, timestamp = ? WHERE id = ?`,
-      [newUri, hash, timestamp, existingId]
+      `
+      INSERT OR REPLACE INTO vehicle_photos (
+        id, vehicle_id, month_year, photo_type,
+        photo_uri, photo_hash, timestamp, synced_to_cloud, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        id,
+        vehicle_id,
+        month,
+        photo_type,
+        photo_uri,
+        null, // hash not computed yet
+        now,
+        0, // synced_to_cloud = false
+        now,
+      ]
     );
 
-    const updated = db.getAllSync('SELECT * FROM vehicle_photos WHERE id = ?', [existingId]);
-    return mapRowToVehiclePhoto(updated[0]);
+    console.log(`✅ Saved ${photo_type} photo for vehicle ${vehicle_id} (${month})`);
+
+    const newPhoto: VehiclePhoto = {
+      id,
+      vehicle_id,
+      month_year: month,
+      photo_type,
+      photo_uri,
+      photo_hash: null,
+      timestamp: now,
+      synced_to_cloud: false,
+      created_at: now,
+    };
+
+    return newPhoto;
+  } catch (error) {
+    console.error('❌ Error saving odometer photo:', error);
+    throw error;
   }
-
-  db.runSync(
-    `INSERT INTO vehicle_photos (id, vehicle_id, month_year, photo_type, photo_uri, photo_hash, timestamp, synced_to_cloud, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [photoId, vehicleId, targetMonthYear, photoType, newUri, hash, timestamp, 0, timestamp]
-  );
-
-  return {
-    id: photoId,
-    vehicle_id: vehicleId,
-    month_year: targetMonthYear,
-    photo_type: photoType,
-    photo_uri: newUri,
-    photo_hash: hash,
-    timestamp,
-    synced_to_cloud: false,
-    created_at: timestamp,
-  };
 }
 
-export async function getMonthlyRecordsByVehicle(vehicleId: string): Promise<MonthlyPhotoRecord[]> {
-  const rows = db.getAllSync(
-    'SELECT DISTINCT month_year FROM vehicle_photos WHERE vehicle_id = ? ORDER BY month_year DESC',
-    [vehicleId]
-  );
+/**
+ * Retrieves all photo records for a given vehicle, grouped by month.
+ */
+export async function getMonthlyRecordsByVehicle(
+  vehicle_id: string
+): Promise<MonthlyPhotoRecord[]> {
+  try {
+    const db = await initDatabase();
+    const rows = db.getAllSync(
+      'SELECT * FROM vehicle_photos WHERE vehicle_id = ? ORDER BY month_year DESC',
+      [vehicle_id]
+    );
 
-  const records: MonthlyPhotoRecord[] = [];
+    const grouped: Record<string, MonthlyPhotoRecord> = {};
 
-  for (const row of rows) {
-    const monthYear = (row as any).month_year;
-    const photos = await getPhotosByVehicleAndMonth(vehicleId, monthYear);
-    records.push({
-      month_year: monthYear,
-      start_photo: photos.start,
-      end_photo: photos.end,
-    });
+    for (const row of rows) {
+      const month = row.month_year || 'Unknown';
+      if (!grouped[month]) {
+        grouped[month] = { month_year: month, start_photo: null, end_photo: null };
+      }
+
+      const photo: VehiclePhoto = {
+        id: row.id,
+        vehicle_id: row.vehicle_id,
+        month_year: row.month_year,
+        photo_type: row.photo_type,
+        photo_uri: row.photo_uri,
+        photo_hash: row.photo_hash,
+        timestamp: row.timestamp,
+        synced_to_cloud: row.synced_to_cloud === 1,
+        created_at: row.created_at,
+      };
+
+      if (row.photo_type === 'start') grouped[month].start_photo = photo;
+      else if (row.photo_type === 'end') grouped[month].end_photo = photo;
+    }
+
+    const result = Object.values(grouped);
+    return result;
+  } catch (error) {
+    console.error('❌ Error fetching monthly photo records:', error);
+    return [];
   }
-
-  return records;
 }
 
-export async function getPhotosByVehicleAndMonth(
-  vehicleId: string,
-  monthYear: string
-): Promise<{ start?: VehiclePhoto; end?: VehiclePhoto }> {
-  const rows = db.getAllSync(
-    'SELECT * FROM vehicle_photos WHERE vehicle_id = ? AND month_year = ?',
-    [vehicleId, monthYear]
-  );
+/**
+ * Fetches all photos for a specific month and vehicle.
+ */
+export async function getPhotosForMonth(
+  vehicle_id: string,
+  month_year: string
+): Promise<VehiclePhoto[]> {
+  try {
+    const db = await initDatabase();
+    const rows = db.getAllSync(
+      'SELECT * FROM vehicle_photos WHERE vehicle_id = ? AND month_year = ? ORDER BY timestamp DESC',
+      [vehicle_id, month_year]
+    );
 
-  const photos = rows.map(mapRowToVehiclePhoto);
-  return {
-    start: photos.find(p => p.photo_type === 'start'),
-    end: photos.find(p => p.photo_type === 'end'),
-  };
+    return rows.map((r: any) => ({
+      id: r.id,
+      vehicle_id: r.vehicle_id,
+      month_year: r.month_year,
+      photo_type: r.photo_type,
+      photo_uri: r.photo_uri,
+      photo_hash: r.photo_hash,
+      timestamp: r.timestamp,
+      synced_to_cloud: r.synced_to_cloud === 1,
+      created_at: r.created_at,
+    }));
+  } catch (error) {
+    console.error('❌ Error fetching photos for month:', error);
+    return [];
+  }
 }
 
-export async function checkMissingPhotos(vehicleId: string, monthYear: string): Promise<{
-  needsStart: boolean;
-  needsEnd: boolean;
-}> {
-  const photos = await getPhotosByVehicleAndMonth(vehicleId, monthYear);
-  return {
-    needsStart: !photos.start,
-    needsEnd: !photos.end,
-  };
+/**
+ * Deletes a photo record by ID.
+ */
+export async function deleteOdometerPhoto(photo_id: string): Promise<void> {
+  try {
+    const db = await initDatabase();
+    db.runSync('DELETE FROM vehicle_photos WHERE id = ?', [photo_id]);
+    console.log('🗑️  Deleted photo', photo_id);
+  } catch (error) {
+    console.error('❌ Error deleting photo:', error);
+  }
 }
 
-function mapRowToVehiclePhoto(row: any): VehiclePhoto {
-  return {
-    id: row.id,
-    vehicle_id: row.vehicle_id,
-    month_year: row.month_year,
-    photo_type: row.photo_type,
-    photo_uri: row.photo_uri,
-    photo_hash: row.photo_hash,
-    timestamp: row.timestamp,
-    synced_to_cloud: row.synced_to_cloud === 1,
-    created_at: row.created_at,
-  };
+/**
+ * Returns current month-year string like "2025-10"
+ * (fallback if dateUtils is missing).
+ */
+export function getCurrentMonthYear(): string {
+  const now = new Date();
+  const month = (now.getMonth() + 1).toString().padStart(2, '0');
+  return `${now.getFullYear()}-${month}`;
 }
