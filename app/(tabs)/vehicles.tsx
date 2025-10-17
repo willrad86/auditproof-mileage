@@ -18,19 +18,25 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
 } from 'react-native';
-import { Camera, Plus, X, ChevronDown, ChevronUp, Download } from 'lucide-react-native';
+import { Camera, Plus, X, ChevronDown, ChevronUp, Download, Trash2 } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect } from '@react-navigation/native';
 import { Vehicle, VehiclePhoto, MonthlyPhotoRecord } from '../../src/types';
-import { getVehicles, addVehicle } from '../../src/services/simpleVehicleService';
+import { getVehicles, addVehicle, deleteVehicle } from '../../src/services/simpleVehicleService';
 import {
   saveOdometerPhoto,
   getMonthlyRecordsByVehicle,
   getCurrentMonthYear,
 } from '../../src/services/odometerPhotoService';
-import { checkNewVehicleNeedsStartPhoto, markPromptShown } from '../../src/services/photoPromptService';
+import {
+  checkNewVehicleNeedsStartPhoto,
+  markPromptShown,
+  markEndOfMonthPromptShown,
+} from '../../src/services/photoPromptService';
 import OdometerPhotoViewer from '../../src/components/OdometerPhotoViewer';
 import PhotoPromptModal from '../../src/components/PhotoPromptModal';
+import EndOfMonthPhotoModal from '../../src/components/EndOfMonthPhotoModal';
+import { usePhotoPrompts } from '../../hooks/usePhotoPrompts';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 
@@ -54,12 +60,21 @@ export default function VehiclesScreen() {
     monthYear?: string;
   } | null>(null);
 
+  const { pendingPrompts, clearPrompt, checkForPrompts } = usePhotoPrompts();
+  const [currentPrompt, setCurrentPrompt] = useState<{
+    vehicleId: string;
+    vehicleName: string;
+    monthYear: string;
+  } | null>(null);
+
   const [newVehicle, setNewVehicle] = useState({
     make: '',
     model: '',
     year: new Date().getFullYear(),
     license_plate: '',
+    photoUri: null as string | null,
   });
+  const [takingInitialPhoto, setTakingInitialPhoto] = useState(false);
 
   // --- fade animation for modal overlay
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -85,8 +100,15 @@ export default function VehiclesScreen() {
   useFocusEffect(
     useCallback(() => {
       loadData();
+      checkForPrompts();
     }, [])
   );
+
+  useEffect(() => {
+    if (pendingPrompts.length > 0 && !currentPrompt) {
+      setCurrentPrompt(pendingPrompts[0]);
+    }
+  }, [pendingPrompts, currentPrompt]);
 
   async function loadData() {
     try {
@@ -108,9 +130,40 @@ export default function VehiclesScreen() {
     }
   }
 
+  async function handleTakeInitialPhoto() {
+    try {
+      setTakingInitialPhoto(true);
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Camera permission is needed to take odometer photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: false,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setNewVehicle({ ...newVehicle, photoUri: result.assets[0].uri });
+      }
+    } catch (error) {
+      console.error('Error taking initial photo:', error);
+      Alert.alert('Error', 'Failed to capture photo');
+    } finally {
+      setTakingInitialPhoto(false);
+    }
+  }
+
   async function handleAddVehicle() {
     if (!newVehicle.make || !newVehicle.model || !newVehicle.license_plate) {
-      Alert.alert('Error', 'Please fill in all fields');
+      Alert.alert('Error', 'Please fill in all required fields');
+      return;
+    }
+
+    if (!newVehicle.photoUri) {
+      Alert.alert('Photo Required', 'Please take a starting odometer photo before saving the vehicle.');
       return;
     }
 
@@ -126,28 +179,45 @@ export default function VehiclesScreen() {
         throw new Error('Vehicle creation failed - no vehicle returned');
       }
 
+      // Save the initial odometer photo
+      await saveOdometerPhoto(vehicle.id, 'start', newVehicle.photoUri);
+
       setShowAddModal(false);
       setNewVehicle({
         make: '',
         model: '',
         year: new Date().getFullYear(),
         license_plate: '',
+        photoUri: null,
       });
 
       await loadData();
-
-      const needsPhoto = await checkNewVehicleNeedsStartPhoto(vehicle.id);
-      if (needsPhoto) {
-        setNewVehiclePrompt({
-          vehicleId: vehicle.id,
-          vehicleName: `${vehicle.year} ${vehicle.make} ${vehicle.model}`,
-        });
-      }
+      Alert.alert('Success', 'Vehicle added with starting odometer photo');
     } catch (err) {
       console.error('Error adding vehicle:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to create vehicle';
       Alert.alert('Error', errorMessage);
     }
+  }
+
+  async function handleEndOfMonthPhoto(photoUri: string) {
+    if (!currentPrompt) return;
+
+    try {
+      await saveOdometerPhoto(currentPrompt.vehicleId, 'end', photoUri, currentPrompt.monthYear);
+      await markEndOfMonthPromptShown(currentPrompt.vehicleId, currentPrompt.monthYear);
+      clearPrompt(currentPrompt.vehicleId);
+      setCurrentPrompt(null);
+      await loadData();
+      Alert.alert('Success', 'End-of-month odometer photo saved');
+    } catch (error) {
+      console.error('Error saving end-of-month photo:', error);
+      Alert.alert('Error', 'Failed to save photo');
+    }
+  }
+
+  function handleDismissEndOfMonthPrompt() {
+    setCurrentPrompt(null);
   }
 
   async function handleTakePhoto(vehicleId: string, photoType: 'start' | 'end', monthYear?: string) {
@@ -179,6 +249,30 @@ export default function VehiclesScreen() {
     }
   }
 
+  async function handleDeleteVehicle(vehicleId: string, vehicleName: string) {
+    Alert.alert(
+      'Delete Vehicle',
+      `Are you sure you want to delete ${vehicleName}? This will remove all associated photos and trip data.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteVehicle(vehicleId);
+              await loadData();
+              Alert.alert('Success', 'Vehicle deleted');
+            } catch (error) {
+              console.error('Error deleting vehicle:', error);
+              Alert.alert('Error', 'Failed to delete vehicle');
+            }
+          },
+        },
+      ]
+    );
+  }
+
   function toggleExpanded(vehicleId: string) {
     const newExpanded = new Set(expandedVehicles);
     if (newExpanded.has(vehicleId)) newExpanded.delete(vehicleId);
@@ -195,8 +289,12 @@ export default function VehiclesScreen() {
 
     return (
       <View style={styles.vehicleCard}>
-        <TouchableOpacity onPress={() => toggleExpanded(item.id)} activeOpacity={0.7}>
-          <View style={styles.vehicleHeader}>
+        <View style={styles.vehicleHeader}>
+          <TouchableOpacity
+            onPress={() => toggleExpanded(item.id)}
+            activeOpacity={0.7}
+            style={styles.vehicleHeaderMain}
+          >
             <View style={styles.vehicleInfo}>
               <Text style={styles.vehicleName}>
                 {item.year} {item.make} {item.model}
@@ -204,8 +302,16 @@ export default function VehiclesScreen() {
               <Text style={styles.licensePlate}>{item.license_plate}</Text>
             </View>
             {isExpanded ? <ChevronUp size={24} color="#64748b" /> : <ChevronDown size={24} color="#64748b" />}
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={() =>
+              handleDeleteVehicle(item.id, `${item.year} ${item.make} ${item.model}`)
+            }
+          >
+            <Trash2 size={20} color="#ef4444" />
+          </TouchableOpacity>
+        </View>
 
         {isExpanded && (
           <View style={styles.expandedContent}>
@@ -314,7 +420,32 @@ export default function VehiclesScreen() {
                     />
                   </View>
 
-                  <TouchableOpacity style={styles.addButton} onPress={handleAddVehicle}>
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>Starting Odometer Photo *</Text>
+                    <TouchableOpacity
+                      style={[styles.photoButton, newVehicle.photoUri && styles.photoButtonSuccess]}
+                      onPress={handleTakeInitialPhoto}
+                      disabled={takingInitialPhoto}
+                    >
+                      <Camera size={20} color="#fff" />
+                      <Text style={styles.photoButtonText}>
+                        {takingInitialPhoto
+                          ? 'Opening Camera...'
+                          : newVehicle.photoUri
+                          ? 'Photo Captured ✓'
+                          : 'Take Photo'}
+                      </Text>
+                    </TouchableOpacity>
+                    {newVehicle.photoUri && (
+                      <Image source={{ uri: newVehicle.photoUri }} style={styles.photoPreview} />
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.addButton, !newVehicle.photoUri && styles.addButtonDisabled]}
+                    onPress={handleAddVehicle}
+                    disabled={!newVehicle.photoUri}
+                  >
                     <Text style={styles.addButtonText}>Add Vehicle</Text>
                   </TouchableOpacity>
                 </ScrollView>
@@ -323,6 +454,17 @@ export default function VehiclesScreen() {
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* End-of-Month Photo Prompt */}
+      {currentPrompt && (
+        <EndOfMonthPhotoModal
+          visible={true}
+          vehicleName={currentPrompt.vehicleName}
+          monthYear={currentPrompt.monthYear}
+          onPhotoTaken={handleEndOfMonthPhoto}
+          onDismiss={handleDismissEndOfMonthPrompt}
+        />
+      )}
     </View>
   );
 }
@@ -343,7 +485,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  vehicleHeaderMain: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   vehicleInfo: { flex: 1 },
+  deleteButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
   vehicleName: { fontSize: 18, fontWeight: '700', color: '#1e293b', marginBottom: 4 },
   licensePlate: { fontSize: 14, color: '#64748b', fontWeight: '500' },
   expandedContent: { marginTop: 16, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 16 },
@@ -394,5 +546,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  addButtonDisabled: {
+    backgroundColor: '#94a3b8',
+    opacity: 0.6,
+  },
   addButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  photoButton: {
+    backgroundColor: '#3b82f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 14,
+    borderRadius: 10,
+    gap: 8,
+  },
+  photoButtonSuccess: {
+    backgroundColor: '#10b981',
+  },
+  photoButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  photoPreview: {
+    width: '100%',
+    height: 200,
+    borderRadius: 10,
+    marginTop: 12,
+  },
 });

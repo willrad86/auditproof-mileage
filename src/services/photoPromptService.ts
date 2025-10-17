@@ -103,6 +103,83 @@ export async function markPromptShown(vehicle_id: string): Promise<void> {
 }
 
 /**
+ * Checks if a vehicle needs an end-of-month odometer photo.
+ * Returns the month-year string if an end photo is missing for the previous month.
+ */
+export async function checkEndOfMonthPhotoPrompt(vehicle_id: string): Promise<string | null> {
+  try {
+    const db = await initDatabase();
+    await initPromptTable();
+
+    const currentMonth = getCurrentMonthYear();
+    const monthlyRecords = await getMonthlyRecordsByVehicle(vehicle_id);
+
+    // Get previous month
+    const now = new Date();
+    const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonth = `${prevMonthDate.getFullYear()}-${(prevMonthDate.getMonth() + 1)
+      .toString()
+      .padStart(2, '0')}`;
+
+    // Check if previous month has an end photo
+    const prevMonthRecord = monthlyRecords.find(r => r.month_year === prevMonth);
+
+    // If there's a start photo but no end photo for previous month
+    if (prevMonthRecord && prevMonthRecord.start_photo && !prevMonthRecord.end_photo) {
+      // Check if we've already prompted for this
+      const existing = db.getFirstSync(
+        'SELECT * FROM photo_prompts WHERE vehicle_id = ? AND month_year = ? AND shown = 1',
+        [vehicle_id, prevMonth]
+      );
+
+      // Only prompt if we haven't already shown this prompt
+      if (!existing) {
+        console.log(`📸 End-of-month photo needed for vehicle ${vehicle_id} (${prevMonth})`);
+        return prevMonth;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('❌ Error checking end-of-month photo prompt:', error);
+    return null;
+  }
+}
+
+/**
+ * Marks that an end-of-month prompt has been shown and acknowledged.
+ */
+export async function markEndOfMonthPromptShown(vehicle_id: string, month_year: string): Promise<void> {
+  try {
+    const db = await initDatabase();
+    await initPromptTable();
+
+    const existing = db.getFirstSync(
+      'SELECT * FROM photo_prompts WHERE vehicle_id = ? AND month_year = ?',
+      [vehicle_id, month_year]
+    );
+
+    if (existing) {
+      db.runSync(
+        'UPDATE photo_prompts SET shown = 1 WHERE vehicle_id = ? AND month_year = ?',
+        [vehicle_id, month_year]
+      );
+    } else {
+      const id = generateUUID();
+      const now = new Date().toISOString();
+      db.runSync(
+        'INSERT INTO photo_prompts (id, vehicle_id, month_year, shown, created_at) VALUES (?, ?, ?, ?, ?)',
+        [id, vehicle_id, month_year, 1, now]
+      );
+    }
+
+    console.log(`✅ End-of-month prompt marked as shown for ${vehicle_id} (${month_year})`);
+  } catch (error) {
+    console.error('❌ Error marking end-of-month prompt as shown:', error);
+  }
+}
+
+/**
  * Clears old prompt records (optional housekeeping).
  * Call monthly or on DB cleanup.
  */
