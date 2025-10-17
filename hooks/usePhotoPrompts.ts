@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { getVehicles } from '../src/services/simpleVehicleService';
-import { checkEndOfMonthPhotoPrompt } from '../src/services/photoPromptService';
+import { checkEndOfMonthPhotoPrompt, checkStartOfMonthPhotoPrompt } from '../src/services/photoPromptService';
 
 export interface PhotoPromptInfo {
   vehicleId: string;
   vehicleName: string;
   monthYear: string;
+  type: 'start' | 'end';
 }
 
 export function usePhotoPrompts() {
@@ -19,12 +20,25 @@ export function usePhotoPrompts() {
       const prompts: PhotoPromptInfo[] = [];
 
       for (const vehicle of vehicles) {
-        const monthYear = await checkEndOfMonthPhotoPrompt(vehicle.id);
-        if (monthYear) {
+        // Check for end-of-month photo (previous month)
+        const endMonthYear = await checkEndOfMonthPhotoPrompt(vehicle.id);
+        if (endMonthYear) {
           prompts.push({
             vehicleId: vehicle.id,
             vehicleName: `${vehicle.year} ${vehicle.make} ${vehicle.model}`,
-            monthYear,
+            monthYear: endMonthYear,
+            type: 'end',
+          });
+        }
+
+        // Check for start-of-month photo (current month)
+        const startMonthYear = await checkStartOfMonthPhotoPrompt(vehicle.id);
+        if (startMonthYear) {
+          prompts.push({
+            vehicleId: vehicle.id,
+            vehicleName: `${vehicle.year} ${vehicle.make} ${vehicle.model}`,
+            monthYear: startMonthYear,
+            type: 'start',
           });
         }
       }

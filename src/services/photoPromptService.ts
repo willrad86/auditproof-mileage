@@ -147,6 +147,43 @@ export async function checkEndOfMonthPhotoPrompt(vehicle_id: string): Promise<st
 }
 
 /**
+ * Checks if a vehicle needs a beginning-of-month odometer photo.
+ * Returns the month-year string if a start photo is missing for the current month.
+ */
+export async function checkStartOfMonthPhotoPrompt(vehicle_id: string): Promise<string | null> {
+  try {
+    const db = await initDatabase();
+    await initPromptTable();
+
+    const currentMonth = getCurrentMonthYear();
+    const monthlyRecords = await getMonthlyRecordsByVehicle(vehicle_id);
+
+    // Check if current month has a start photo
+    const currentMonthRecord = monthlyRecords.find(r => r.month_year === currentMonth);
+
+    // If no start photo exists for current month
+    if (!currentMonthRecord || !currentMonthRecord.start_photo) {
+      // Check if we've already prompted for this
+      const existing = db.getFirstSync(
+        'SELECT * FROM photo_prompts WHERE vehicle_id = ? AND month_year = ? AND shown = 1',
+        [vehicle_id, currentMonth]
+      );
+
+      // Only prompt if we haven't already shown this prompt
+      if (!existing) {
+        console.log(`📸 Start-of-month photo needed for vehicle ${vehicle_id} (${currentMonth})`);
+        return currentMonth;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('❌ Error checking start-of-month photo prompt:', error);
+    return null;
+  }
+}
+
+/**
  * Marks that an end-of-month prompt has been shown and acknowledged.
  */
 export async function markEndOfMonthPromptShown(vehicle_id: string, month_year: string): Promise<void> {

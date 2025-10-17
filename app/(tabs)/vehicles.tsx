@@ -36,6 +36,7 @@ import {
 import OdometerPhotoViewer from '../../src/components/OdometerPhotoViewer';
 import PhotoPromptModal from '../../src/components/PhotoPromptModal';
 import EndOfMonthPhotoModal from '../../src/components/EndOfMonthPhotoModal';
+import StartOfMonthPhotoModal from '../../src/components/StartOfMonthPhotoModal';
 import { usePhotoPrompts } from '../../hooks/usePhotoPrompts';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
@@ -106,7 +107,9 @@ export default function VehiclesScreen() {
 
   useEffect(() => {
     if (pendingPrompts.length > 0 && !currentPrompt) {
-      setCurrentPrompt(pendingPrompts[0]);
+      // Prioritize end-of-month prompts (previous month) over start-of-month (current month)
+      const endPrompt = pendingPrompts.find(p => p.type === 'end');
+      setCurrentPrompt(endPrompt || pendingPrompts[0]);
     }
   }, [pendingPrompts, currentPrompt]);
 
@@ -200,8 +203,24 @@ export default function VehiclesScreen() {
     }
   }
 
+  async function handleStartOfMonthPhoto(photoUri: string) {
+    if (!currentPrompt || currentPrompt.type !== 'start') return;
+
+    try {
+      await saveOdometerPhoto(currentPrompt.vehicleId, 'start', photoUri, currentPrompt.monthYear);
+      await markPromptShown(currentPrompt.vehicleId);
+      clearPrompt(currentPrompt.vehicleId);
+      setCurrentPrompt(null);
+      await loadData();
+      Alert.alert('Success', 'Start-of-month odometer photo saved');
+    } catch (error) {
+      console.error('Error saving start-of-month photo:', error);
+      Alert.alert('Error', 'Failed to save photo');
+    }
+  }
+
   async function handleEndOfMonthPhoto(photoUri: string) {
-    if (!currentPrompt) return;
+    if (!currentPrompt || currentPrompt.type !== 'end') return;
 
     try {
       await saveOdometerPhoto(currentPrompt.vehicleId, 'end', photoUri, currentPrompt.monthYear);
@@ -455,8 +474,19 @@ export default function VehiclesScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Start-of-Month Photo Prompt */}
+      {currentPrompt && currentPrompt.type === 'start' && (
+        <StartOfMonthPhotoModal
+          visible={true}
+          vehicleName={currentPrompt.vehicleName}
+          monthYear={currentPrompt.monthYear}
+          onPhotoTaken={handleStartOfMonthPhoto}
+          onDismiss={handleDismissEndOfMonthPrompt}
+        />
+      )}
+
       {/* End-of-Month Photo Prompt */}
-      {currentPrompt && (
+      {currentPrompt && currentPrompt.type === 'end' && (
         <EndOfMonthPhotoModal
           visible={true}
           vehicleName={currentPrompt.vehicleName}

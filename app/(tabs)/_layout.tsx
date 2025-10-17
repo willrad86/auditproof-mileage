@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import { Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Car, MapPin, FileText, Settings, ClipboardCheck } from 'lucide-react-native';
+import { Car, MapPin, FileText, Settings, ClipboardCheck, BarChart3 } from 'lucide-react-native';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -47,6 +47,13 @@ export default function TabLayout() {
         options={{
           title: 'Vehicles',
           tabBarIcon: ({ size, color }) => <Car size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="stats"
+        options={{
+          title: 'Statistics',
+          tabBarIcon: ({ size, color }) => <BarChart3 size={size} color={color} />,
         }}
       />
       <Tabs.Screen
