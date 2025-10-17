@@ -1,29 +1,74 @@
-# Dependency directories
+# ──────────────────────────────
+# Dependencies
+# ──────────────────────────────
 node_modules/
+package-lock.json
+
+# ──────────────────────────────
+# Expo / Metro / Build outputs
+# ──────────────────────────────
 .expo/
-.expo-shared/
 dist/
-build/
+web-build/
+expo-env.d.ts
+.expo-shared/
+.bundle/
+.babelrc
 
-# Logs and caches
+# ──────────────────────────────
+# Native builds
+# ──────────────────────────────
+android/
+ios/
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# ──────────────────────────────
+# SQLite / Local data
+# ──────────────────────────────
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+/data/
+data/
+logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-package-lock.json.backup
 
-# OS files
+# ──────────────────────────────
+# Environment / Secrets
+# ──────────────────────────────
+.env
+.env*.local
+.env.*.backup
+credentials.json
+google-services.json
+GoogleService-Info.plist
+
+# ──────────────────────────────
+# macOS / Windows cruft
+# ──────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Local data and databases
-*.db
-*.sqlite
-/data/
-.env
-.env.local
-
-# IDE / editor junk
+# ──────────────────────────────
+# TypeScript / IDE / Cache
+# ──────────────────────────────
+*.tsbuildinfo
 .vscode/
 .idea/
 *.swp
+*.swo
+*.bak
+*.tmp
+.cache/
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
