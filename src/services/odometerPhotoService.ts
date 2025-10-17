@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
-import * as Crypto from 'expo-crypto';
 import { VehiclePhoto, MonthlyPhotoRecord } from '../types';
 import { initDatabase } from './simpleVehicleService';
+import { generateUUID } from '../utils/uuid';
 
 /**
  * Saves an odometer photo (start or end) for a given vehicle and month.
@@ -15,7 +15,7 @@ export async function saveOdometerPhoto(
 ): Promise<VehiclePhoto> {
   try {
     const db = await initDatabase();
-    const id = Crypto.randomUUID();
+    const id = generateUUID();
     const now = new Date().toISOString();
     const month = month_year || getCurrentMonthYear();
 

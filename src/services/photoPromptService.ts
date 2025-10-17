@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
-import * as Crypto from 'expo-crypto';
 import { initDatabase } from './simpleVehicleService';
 import { getMonthlyRecordsByVehicle, getCurrentMonthYear } from './odometerPhotoService';
+import { generateUUID } from '../utils/uuid';
 
 /**
  * This service controls whether the app should prompt a user
@@ -51,7 +51,7 @@ export async function checkNewVehicleNeedsStartPhoto(vehicle_id: string): Promis
     if (existing && existing.shown === 1) return false;
 
     // Otherwise, create a new prompt record and signal the app to show the modal
-    const id = Crypto.randomUUID();
+    const id = generateUUID();
     const now = new Date().toISOString();
     db.runSync(
       `INSERT OR REPLACE INTO photo_prompts (id, vehicle_id, month_year, shown, created_at)
@@ -88,7 +88,7 @@ export async function markPromptShown(vehicle_id: string): Promise<void> {
         [vehicle_id, month]
       );
     } else {
-      const id = Crypto.randomUUID();
+      const id = generateUUID();
       const now = new Date().toISOString();
       db.runSync(
         'INSERT INTO photo_prompts (id, vehicle_id, month_year, shown, created_at) VALUES (?, ?, ?, ?, ?)',

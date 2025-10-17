@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
-import * as Crypto from 'expo-crypto';
 import { Vehicle } from '../types';
+import { generateUUID } from '../utils/uuid';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -78,7 +78,7 @@ export async function addVehicle(
 
   try {
     const database = await initDatabase();
-    const id = Crypto.randomUUID();
+    const id = generateUUID();
     const now = new Date().toISOString();
     const safeYear = year && year > 1900 && year <= new Date().getFullYear() + 1
       ? parseInt(String(year), 10)
