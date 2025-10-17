@@ -2,7 +2,6 @@ import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
 import { VehiclePhoto, MonthlyPhotoRecord } from '../types';
 import { initDatabase } from './simpleVehicleService';
-import { getCurrentMonthYear } from '../utils/dateUtils'; // optional helper if exists
 
 /**
  * Saves an odometer photo (start or end) for a given vehicle and month.
