@@ -25,7 +25,7 @@ import {
   updateTripClassification,
   calculateReimbursement,
 } from '../../src/services/tripService';
-import { getVehicles } from '../../src/services/vehicleService';
+import { getVehicles } from '../../src/services/simpleVehicleService';
 import { geocodeWithFallback } from '../../src/services/geoService';
 import { generateStaticMapImage } from '../../src/services/mapService';
 import {

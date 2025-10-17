@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { FileText, Download, CheckCircle, AlertCircle } from 'lucide-react-native';
 import { supabase } from '../../src/utils/supabaseClient';
-import { getVehicles } from '../../src/services/vehicleService';
+import { getVehicles } from '../../src/services/simpleVehicleService';
 import { exportMonthlyReport, shareReport, verifyReport } from '../../src/services/exportService';
 import { Vehicle, Report } from '../../src/types';
 

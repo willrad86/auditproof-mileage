@@ -122,6 +122,10 @@ export default function VehiclesScreen() {
         newVehicle.license_plate
       );
 
+      if (!vehicle || !vehicle.id) {
+        throw new Error('Vehicle creation failed - no vehicle returned');
+      }
+
       setShowAddModal(false);
       setNewVehicle({
         make: '',
@@ -142,7 +146,7 @@ export default function VehiclesScreen() {
     } catch (err) {
       console.error('Error adding vehicle:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to create vehicle';
-      Alert.alert('Error', `Failed to create vehicle: ${errorMessage}`);
+      Alert.alert('Error', errorMessage);
     }
   }
 

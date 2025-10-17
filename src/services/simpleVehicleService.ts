@@ -8,6 +8,22 @@ let db: SQLite.SQLiteDatabase | null = null;
 export async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!db) {
     db = SQLite.openDatabaseSync('auditproof.db');
+
+    // Check if vehicles table exists with wrong schema (INTEGER id instead of TEXT)
+    try {
+      const tableInfo = db.getAllSync("PRAGMA table_info(vehicles)");
+      const idColumn = (tableInfo as any[]).find((col: any) => col.name === 'id');
+
+      if (idColumn && idColumn.type === 'INTEGER') {
+        console.log('⚠️  Detected old schema with INTEGER id, migrating...');
+        db.execSync('DROP TABLE IF EXISTS vehicle_photos');
+        db.execSync('DROP TABLE IF EXISTS vehicles');
+        console.log('✅ Old tables dropped');
+      }
+    } catch (e) {
+      // Table doesn't exist yet, continue
+    }
+
     db.execSync(`
       CREATE TABLE IF NOT EXISTS vehicles (
         id TEXT PRIMARY KEY,
@@ -39,7 +55,7 @@ export async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
         FOREIGN KEY (vehicle_id) REFERENCES vehicles(id) ON DELETE CASCADE
       );
     `);
-    console.log('✅ Local database initialized');
+    console.log('✅ Local database initialized with TEXT id schema');
   }
   return db!;
 }
@@ -51,16 +67,22 @@ export async function addVehicle(
   year: number,
   license_plate: string
 ): Promise<Vehicle> {
-  const now = new Date().toISOString();
-  const id = Crypto.randomUUID(); // ← Expo-safe UUID
-
+  // Validate inputs
   const safeMake = (make || '').trim();
   const safeModel = (model || '').trim();
-  if (!safeMake || !safeModel) throw new Error('Make and model are required.');
+  const safeLicensePlate = (license_plate || '').trim();
+
+  if (!safeMake) throw new Error('Make is required');
+  if (!safeModel) throw new Error('Model is required');
+  if (!safeLicensePlate) throw new Error('License plate is required');
 
   try {
     const database = await initDatabase();
-    const safeYear = year ? parseInt(String(year), 10) : new Date().getFullYear();
+    const id = Crypto.randomUUID();
+    const now = new Date().toISOString();
+    const safeYear = year && year > 1900 && year <= new Date().getFullYear() + 1
+      ? parseInt(String(year), 10)
+      : new Date().getFullYear();
 
     database.runSync(
       `
@@ -76,7 +98,7 @@ export async function addVehicle(
         safeMake,
         safeModel,
         safeYear,
-        license_plate || '',
+        safeLicensePlate,
         null,
         null,
         null,
@@ -88,12 +110,22 @@ export async function addVehicle(
       ]
     );
 
+    // Verify the insert succeeded by fetching the record
+    const inserted = database.getFirstSync(
+      'SELECT * FROM vehicles WHERE id = ?',
+      [id]
+    );
+
+    if (!inserted) {
+      throw new Error('Failed to insert vehicle into database');
+    }
+
     const vehicle: Vehicle = {
       id,
       make: safeMake,
       model: safeModel,
       year: safeYear,
-      license_plate: license_plate || '',
+      license_plate: safeLicensePlate,
       photo_odometer_start: null,
       photo_odometer_start_hash: null,
       photo_odometer_end: null,
@@ -104,11 +136,12 @@ export async function addVehicle(
       updated_at: now,
     };
 
-    console.log('✅ Vehicle saved successfully:', safeMake, safeModel);
+    console.log('✅ Vehicle saved successfully:', vehicle.year, vehicle.make, vehicle.model);
     return vehicle;
   } catch (err) {
     console.error('❌ Error adding vehicle:', err);
-    throw err;
+    const errorMsg = err instanceof Error ? err.message : 'Unknown database error';
+    throw new Error(`Failed to save vehicle: ${errorMsg}`);
   }
 }
 
